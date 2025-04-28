@@ -509,9 +509,11 @@ async def main():
             if os.path.exists(filepath):
                 with open(filepath, 'r', encoding='utf-8') as f:
                     usernames = [line.strip() for line in f if line.strip()]
-                for username in usernames:
-                    user_repos = await scanner.fetch_repos_of_user(session, username)
+                tasks = [scanner.fetch_repos_of_user(session, username) for username in usernames]
+                results = await asyncio.gather(*tasks)
+                for user_repos in results:
                     repos.extend(user_repos)
+
             else:
                 print(Fore.RED + "❌ File not found.")
                 return
