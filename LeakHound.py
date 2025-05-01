@@ -10,6 +10,7 @@ import argparse
 from jinja2 import Environment, FileSystemLoader
 from colorama import init, Fore
 from tqdm import tqdm
+from markupsafe import escape, Markup  # Import MarkupSafe functions
 
 # Initialize Colorama for colored terminal output.
 init(autoreset=True)
@@ -59,7 +60,6 @@ class GitLeaksAsyncScanner:
             async with self.semaphore:
                 async with session.get(url, headers=headers) as resp:
                     if resp.status == 409:
-                        # Log a neutral info message in white for empty/conflict repos.
                         tqdm.write(Fore.WHITE + f"∅ Empty or conflict (409) encountered for URL: {url}")
                         return {}
                     if resp.status == 403 and (
@@ -224,31 +224,39 @@ class GitLeaksAsyncScanner:
         return results
 
     def create_advanced_snippet(self, content, match_obj, context=40):
+        """
+        Create a snippet of the matched text with surrounding context.
+        This method uses MarkupSafe's escape function to convert any literal "<" and ">" 
+        into their HTML-escaped forms (i.e. "&lt;" and "&gt;") for all non-matched content,
+        while the inserted <mark class="highlight">…</mark> tags remain unescaped.
+        """
         start = match_obj.start()
         end = match_obj.end()
         snippet_start = max(0, start - context)
         snippet_end = min(len(content), end + context)
         prefix = "..." if snippet_start > 0 else ""
         suffix = "..." if snippet_end < len(content) else ""
+        # Concatenate parts as safe Markup so that our <mark> remains active.
         snippet = (
-            prefix +
-            content[snippet_start:start] +
-            "<span style='background-color: #ffcc00; color: black; font-weight: bold;'>" +
-            content[start:end] +
-            "</span>" +
-            content[end:snippet_end] +
-            suffix
+            Markup(prefix) +
+            escape(content[snippet_start:start]) +
+            Markup("<mark class='highlight'>") +
+            escape(content[start:end]) +
+            Markup("</mark>") +
+            escape(content[end:snippet_end]) +
+            Markup(suffix)
         )
         return snippet
 
     def generate_unified_html_report(self, all_results, output_file='unified_report.html'):
         """
         Generates a unified HTML report with the following features:
-          - Centered, bold "GitLeaks Secret Report" in the header
-          - Hamburger button at top-left
-          - Index search box for user/repo filtering, automatically triggered on keyup
-          - Hide Patterns / Show Only Patterns fieldsets that filter the results table
-          - A main results search (top-right) that also filters
+          - A centered, bold header "GitLeaks Secret Report"
+          - A hamburger button at top‑left for the repository index panel
+          - Index search and main results search boxes for filtering
+          - Fieldsets for Hide/Show Patterns filtering the results table
+          - **Collapsible repository sections:** each repo header now includes a toggle icon 
+            (initially “[-]”) to collapse or expand the repository’s details.
         """
         # Deduplicate commit results.
         for repo in all_results:
@@ -283,7 +291,7 @@ class GitLeaksAsyncScanner:
             repo_index.setdefault(username, []).append(repo['repo_full_name'])
         repo_index = dict(sorted(repo_index.items()))
 
-        # Gather unique patterns
+        # Gather unique patterns.
         unique_patterns = set()
         for repo in all_results:
             if repo.get("results"):
@@ -298,7 +306,7 @@ class GitLeaksAsyncScanner:
                                 unique_patterns.add(m["pattern_name"])
         unique_patterns = sorted(unique_patterns)
 
-        # HTML template with final UI changes and working Hide/Show Patterns
+        # The HTML template now includes collapse/expand functionality for each repository.
         template_str = r'''
         <!DOCTYPE html>
         <html lang="en">
@@ -338,7 +346,7 @@ class GitLeaksAsyncScanner:
               color: var(--header-text);
               position: relative;
             }
-            /* Hamburger stays at top-left */
+            /* Hamburger stays at top‑left */
             #toggleButton {
               position: absolute;
               left: 10px;
@@ -352,7 +360,7 @@ class GitLeaksAsyncScanner:
               border-radius: 4px;
               z-index: 1000;
             }
-            /* Main results search (top-right corner) */
+            /* Main results search (top‑right corner) */
             #mainSearchContainer {
               position: absolute;
               right: 10px;
@@ -487,6 +495,14 @@ class GitLeaksAsyncScanner:
             .dataRow {
               transition: background 0.2s ease;
             }
+            /* Highlight for matched regex snippets */
+            mark.highlight {
+              background-color: #FFD700;
+              color: #000;
+              font-weight: bold;
+              padding: 0 2px;
+              border-radius: 3px;
+            }
             /* Light theme overrides */
             body.white-theme {
               --bg-color: #ffffff;
@@ -517,7 +533,6 @@ class GitLeaksAsyncScanner:
               }
             }
             function indexSearchKeyup() {
-              // Called whenever user types in the left "Search index..."
               var input = document.getElementById("indexSearchInput").value.toLowerCase();
               var userBlocks = document.getElementsByClassName("user-block");
               for(var i=0; i<userBlocks.length; i++){
@@ -536,39 +551,26 @@ class GitLeaksAsyncScanner:
                 userBlocks[i].style.display = hasMatch ? "block" : "none";
               }
             }
-
             /* =============== MAIN RESULTS FILTERS (Hide/Show Patterns + searchInput) =============== */
             function updateResultsFilters() {
-              // Grab the main search input
               var mainSearch = document.getElementById("searchInput").value.toLowerCase();
-
-              // Grab checked hide patterns
               var hideCheck = document.querySelectorAll(".pattern-checkbox.hide:checked");
               var hidePatterns = [];
               for(var i=0; i<hideCheck.length; i++){
                 hidePatterns.push(hideCheck[i].value.toLowerCase());
               }
-
-              // Grab checked show patterns
               var showCheck = document.querySelectorAll(".pattern-checkbox.show:checked");
               var showPatterns = [];
               for(var i=0; i<showCheck.length; i++){
                 showPatterns.push(showCheck[i].value.toLowerCase());
               }
-
-              // Each row has a data-pattern attribute
               var rows = document.getElementsByClassName("dataRow");
               for(var j=0; j<rows.length; j++){
                 var rowText = rows[j].textContent.toLowerCase();
                 var pattern = rows[j].getAttribute("data-pattern").toLowerCase();
-                // Filter logic:
-                //   1) Row must match mainSearch
-                //   2) pattern not in hidePatterns
-                //   3) If showPatterns is non-empty, pattern must be in showPatterns
                 var matchesSearch = (rowText.indexOf(mainSearch) !== -1);
                 var hiddenByHideList = (hidePatterns.indexOf(pattern) !== -1);
                 var forcedByShowList = (showPatterns.length === 0 || showPatterns.indexOf(pattern) !== -1);
-
                 if(matchesSearch && !hiddenByHideList && forcedByShowList){
                   rows[j].style.display = "";
                 } else {
@@ -576,7 +578,6 @@ class GitLeaksAsyncScanner:
                 }
               }
             }
-
             function toggleTheme() {
               var select = document.getElementById("themeToggle");
               if(select.value === "white") {
@@ -585,7 +586,6 @@ class GitLeaksAsyncScanner:
                 document.body.classList.remove("white-theme");
               }
             }
-
             function switchCommit(repoId, version) {
               var containers = document.querySelectorAll("[id^='repoOutput_" + repoId + "_']");
               for(var i=0; i<containers.length; i++){
@@ -594,15 +594,21 @@ class GitLeaksAsyncScanner:
               var selected = document.getElementById("repoOutput_" + repoId + "_" + version);
               if(selected) selected.classList.remove("hidden");
             }
-
+            /* =============== Repository Collapse/Expand =============== */
+            function toggleRepoDetails(repoId) {
+              var details = document.getElementById("repoDetails_" + repoId);
+              var toggleIndicator = document.getElementById("toggleRepo_" + repoId);
+              if (details.style.display === "none") {
+                details.style.display = "block";
+                toggleIndicator.textContent = "[-]";
+              } else {
+                details.style.display = "none";
+                toggleIndicator.textContent = "[+]";
+              }
+            }
             window.onload = function() {
-              // When user types in the main search box, update results
               document.getElementById("searchInput").addEventListener("keyup", updateResultsFilters);
-
-              // When user types in the left "Search index" box, auto-filter the user/repo list
               document.getElementById("indexSearchInput").addEventListener("keyup", indexSearchKeyup);
-
-              // When user toggles a hide or show checkbox, update results
               var hideCbs = document.querySelectorAll(".pattern-checkbox.hide");
               var showCbs = document.querySelectorAll(".pattern-checkbox.show");
               for(var i=0; i<hideCbs.length; i++){
@@ -615,7 +621,7 @@ class GitLeaksAsyncScanner:
           </script>
         </head>
         <body>
-          <!-- Header with center title & hamburger top-left -->
+          <!-- Header with center title & hamburger top‑left -->
           <header>
             GitLeaks Secret Report
             <button id="toggleButton" onclick="toggleRepoIndex()">☰</button>
@@ -627,7 +633,6 @@ class GitLeaksAsyncScanner:
               </select>
             </div>
           </header>
-
           <!-- Left panel: repository index + patterns fieldsets -->
           <div id="repo-index">
             <div id="indexSearchContainer">
@@ -668,58 +673,29 @@ class GitLeaksAsyncScanner:
               {% endfor %}
             </fieldset>
           </div>
-
           <!-- Main content: repository results -->
           <div style="margin-top:20px;">
             {% for repo in repos %}
               {% set safe_repo = repo.repo_full_name|replace("/", "_") %}
               <div class="repository-section" id="{{ safe_repo }}">
                 <h2>
+                  <span id="toggleRepo_{{ safe_repo }}" style="cursor:pointer;" onclick="toggleRepoDetails('{{ safe_repo }}')">[-]</span>
                   📁 <a href="https://github.com/{{ repo.repo_full_name }}" target="_blank" title="{{ repo.repo_full_name }}">
                     {{ repo.repo_full_name }}
                   </a>
                 </h2>
-                <div style="margin-bottom:10px;">
-                  <label for="commitSelect_{{ safe_repo }}">Select Version:</label>
-                  <select id="commitSelect_{{ safe_repo }}" onchange="switchCommit('{{ safe_repo }}', this.value)">
-                    <option value="HEAD" selected>HEAD</option>
-                    {% for commit in repo.commit_results %}
-                      <option value="{{ commit.commit_id }}">{{ commit.commit_id }}</option>
-                    {% endfor %}
-                  </select>
-                </div>
-                <div id="repoOutput_{{ safe_repo }}_HEAD">
-                  {% if repo.results %}
-                    <table>
-                      <tr>
-                        <th>📄 File Path</th>
-                        <th>🔢 Line Number</th>
-                        <th>🎯 Pattern Name</th>
-                        <th>🧩 Snippet</th>
-                      </tr>
-                      {% for file in repo.results %}
-                        {% for match in file.matches %}
-                          <tr class="dataRow" data-pattern="{{ match.pattern_name }}">
-                            <td>{{ file.file_path }}</td>
-                            <td>
-                              <a href="https://github.com/{{ repo.repo_full_name }}/blob/HEAD/{{ file.file_path }}#L{{ match.line_number }}" target="_blank">
-                                {{ match.line_number }}
-                              </a>
-                            </td>
-                            <td>{{ match.pattern_name }}</td>
-                            <td>{{ match.snippet | safe }}</td>
-                          </tr>
-                        {% endfor %}
+                <div id="repoDetails_{{ safe_repo }}">
+                  <div style="margin-bottom:10px;">
+                    <label for="commitSelect_{{ safe_repo }}">Select Version:</label>
+                    <select id="commitSelect_{{ safe_repo }}" onchange="switchCommit('{{ safe_repo }}', this.value)">
+                      <option value="HEAD" selected>HEAD</option>
+                      {% for commit in repo.commit_results %}
+                        <option value="{{ commit.commit_id }}">{{ commit.commit_id }}</option>
                       {% endfor %}
-                    </table>
-                  {% else %}
-                    <p>∅ No secrets found in the latest version.</p>
-                  {% endif %}
-                </div>
-                {% for commit in repo.commit_results %}
-                  <div id="repoOutput_{{ safe_repo }}_{{ commit.commit_id }}" class="hidden">
-                    <h4>Commit: <a href="{{ commit.commit_url }}" target="_blank">{{ commit.commit_id }}</a></h4>
-                    {% if commit.results %}
+                    </select>
+                  </div>
+                  <div id="repoOutput_{{ safe_repo }}_HEAD">
+                    {% if repo.results %}
                       <table>
                         <tr>
                           <th>📄 File Path</th>
@@ -727,12 +703,12 @@ class GitLeaksAsyncScanner:
                           <th>🎯 Pattern Name</th>
                           <th>🧩 Snippet</th>
                         </tr>
-                        {% for file in commit.results %}
+                        {% for file in repo.results %}
                           {% for match in file.matches %}
                             <tr class="dataRow" data-pattern="{{ match.pattern_name }}">
                               <td>{{ file.file_path }}</td>
                               <td>
-                                <a href="https://github.com/{{ repo.repo_full_name }}/blob/{{ commit.commit_id }}/{{ file.file_path }}#L{{ match.line_number }}" target="_blank">
+                                <a href="https://github.com/{{ repo.repo_full_name }}/blob/HEAD/{{ file.file_path }}#L{{ match.line_number }}" target="_blank">
                                   {{ match.line_number }}
                                 </a>
                               </td>
@@ -743,18 +719,47 @@ class GitLeaksAsyncScanner:
                         {% endfor %}
                       </table>
                     {% else %}
-                      <p>∅ No new secrets found in this commit.</p>
+                      <p>∅ No secrets found in the latest version.</p>
                     {% endif %}
                   </div>
-                {% endfor %}
+                  {% for commit in repo.commit_results %}
+                    <div id="repoOutput_{{ safe_repo }}_{{ commit.commit_id }}" class="hidden">
+                      <h4>Commit: <a href="{{ commit.commit_url }}" target="_blank">{{ commit.commit_id }}</a></h4>
+                      {% if commit.results %}
+                        <table>
+                          <tr>
+                            <th>📄 File Path</th>
+                            <th>🔢 Line Number</th>
+                            <th>🎯 Pattern Name</th>
+                            <th>🧩 Snippet</th>
+                          </tr>
+                          {% for file in commit.results %}
+                            {% for match in file.matches %}
+                              <tr class="dataRow" data-pattern="{{ match.pattern_name }}">
+                                <td>{{ file.file_path }}</td>
+                                <td>
+                                  <a href="https://github.com/{{ repo.repo_full_name }}/blob/{{ commit.commit_id }}/{{ file.file_path }}#L{{ match.line_number }}" target="_blank">
+                                    {{ match.line_number }}
+                                  </a>
+                                </td>
+                                <td>{{ match.pattern_name }}</td>
+                                <td>{{ match.snippet | safe }}</td>
+                              </tr>
+                            {% endfor %}
+                          {% endfor %}
+                        </table>
+                      {% else %}
+                        <p>∅ No new secrets found in this commit.</p>
+                      {% endif %}
+                    </div>
+                  {% endfor %}
+                </div>
               </div>
             {% endfor %}
           </div>
         </body>
         </html>
         '''
-
-        # Build final HTML
         env = Environment(loader=FileSystemLoader('.'))
         template = env.from_string(template_str)
         html_content = template.render(
