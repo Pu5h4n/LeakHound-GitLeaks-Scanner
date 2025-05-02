@@ -1,245 +1,349 @@
 patterns:
+  # ------------------------
+  # Cloud Provider Credentials
+  # ------------------------
+  
   - pattern:
       name: AWS Access Key
-      regex: "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}"
+      regex: "(?i)\\b(?:A3T|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}\\b"
       confidence: high
+
   - pattern:
       name: AWS Secret Key
-      regex: "(?i:aws(.{0,20})?)['\\\"][0-9a-zA-Z\\/+]{40}['\\\"]"
+      regex: "(?i)\\baws.{0,20}['\"][0-9A-Za-z\\/+]{40}['\"]\\b"
       confidence: high
+
   - pattern:
-      name: AWS MWS key
-      regex: "amzn\\.mws\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+      name: AWS MWS Key
+      regex: "(?i)\\bamzn\\.mws\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b"
       confidence: high
+
+  - pattern:
+      name: AWS Credential File Info
+      regex: "(?i)\\b(aws_access_key_id|aws_secret_access_key).{0,20}=\\s*['\"][0-9A-Za-z\\/+]{20,40}['\"]\\b"
+      confidence: high
+
+  # ------------------------
+  # Social & Developer Platform Credentials
+  # ------------------------
+
   - pattern:
       name: Facebook Secret Key
-      regex: "(?i:(facebook|fb)(.{0,20})?)['\\\"][0-9a-f]{32}['\\\"]"
+      regex: "(?i)\\b(?:facebook|fb).{0,20}['\"][0-9a-f]{32}['\"]\\b"
       confidence: high
+
   - pattern:
       name: Facebook Client ID
-      regex: "(?i)(facebook|fb)(.{0,20})?['\\\"][0-9]{13,17}['\\\"]"
+      regex: "(?i)\\b(?:facebook|fb).{0,20}['\"][0-9]{13,17}['\"]\\b"
       confidence: high
+
   - pattern:
       name: Twitter Secret Key
-      regex: "(?i)twitter(.{0,20})?[0-9a-z]{35,44}"
+      regex: "(?i)\\btwitter.{0,20}['\"][0-9a-z]{35,44}['\"]\\b"
       confidence: high
+
   - pattern:
       name: Twitter Client ID
-      regex: "(?i)twitter(.{0,20})?[0-9a-z]{18,25}"
+      regex: "(?i)\\btwitter.{0,20}['\"][0-9a-z]{18,25}['\"]\\b"
       confidence: high
+
   - pattern:
-      name: Github Personal Access Token
-      regex: "ghp_[0-9a-zA-Z]{36}"
+      name: GitHub Personal Access Token
+      regex: "(?i)\\bghp_[0-9a-zA-Z]{36}\\b"
       confidence: high
+
   - pattern:
-      name: Github OAuth Access Token
-      regex: "gho_[0-9a-zA-Z]{36}"
+      name: GitHub OAuth Access Token
+      regex: "(?i)\\bgho_[0-9a-zA-Z]{36}\\b"
       confidence: high
+
   - pattern:
-      name: Github App Token
-      regex: "(ghu|ghs)_[0-9a-zA-Z]{36}"
+      name: GitHub App Token
+      regex: "(?i)\\b(?:ghu|ghs)_[0-9a-zA-Z]{36}\\b"
       confidence: high
+
   - pattern:
-      name: Github Refresh Token
-      regex: "ghr_[0-9a-zA-Z]{76}"
+      name: GitHub Refresh Token
+      regex: "(?i)\\bghr_[0-9a-zA-Z]{76}\\b"
       confidence: high
+
+  - pattern:
+      name: GitHub (Generic)
+      regex: "(?i)\\bgithub.{0,20}['\"][0-9a-zA-Z]{35,40}['\"]\\b"
+      confidence: high
+
+  # ------------------------
+  # Professional Networking Credentials
+  # ------------------------
+
   - pattern:
       name: LinkedIn Client ID
-      regex: "(?i)linkedin(.{0,20})?[0-9a-z]{12}"
+      regex: "(?i)\\blinkedin.{0,20}[0-9a-z]{12}\\b"
       confidence: high
+
   - pattern:
       name: LinkedIn Secret Key
-      regex: "(?i)linkedin(.{0,20})?['\\\"][0-9a-z]{16}['\\\"]"
+      regex: "(?i)\\blinkedin.{0,20}['\"][0-9a-z]{16}['\"]\\b"
       confidence: high
+
+  # ------------------------
+  # Communication & Collaboration Tools
+  # ------------------------
+
   - pattern:
-      name: Slack
-      regex: "xox[baprs]-([0-9a-zA-Z]{10,48})?"
+      name: Slack Token
+      regex: "(?i)\\bxox[baprs]-[0-9A-Za-z]{10,48}\\b"
       confidence: high
+
+  - pattern:
+      name: Slack Webhook
+      regex: "(?i)\\bhttps://hooks\\.slack\\.com/services/T[a-zA-Z0-9_]{8}/B[a-zA-Z0-9_]{8,12}/[a-zA-Z0-9_]{24}\\b"
+      confidence: high
+
+  # ------------------------
+  # Asymmetric & Private Keys
+  # ------------------------
+
   - pattern:
       name: Asymmetric Private Key
-      regex: "-----BEGIN ((EC|PGP|DSA|RSA|OPENSSH) )?PRIVATE KEY( BLOCK)?-----"
+      regex: "-----BEGIN (?:EC|PGP|DSA|RSA|OPENSSH) PRIVATE KEY(?: BLOCK)?-----"
       confidence: high
+
+  # ------------------------
+  # Google & GCP Credentials
+  # ------------------------
+
   - pattern:
-      name: Google API key
-      regex: "AIza[0-9A-Za-z\\\\-_]{35}"
+      name: Google API Key
+      regex: "(?i)\\bAIza[0-9A-Za-z_\\-]{35}\\b"
       confidence: high
+
   - pattern:
       name: Google (GCP) Service Account
-      regex: "\"type\": \"service_account\""
+      regex: "\"type\":\\s*\"service_account\""
       confidence: high
+
   - pattern:
-      name: Heroku API key
-      regex: "(?i)heroku(.{0,20})?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+      name: Google Client ID
+      regex: "(?i)\\bGOOGLE_CLIENT_ID\\s*=\\s*(['\"])?\\d{9,15}-[a-z0-9.-]+\\.apps\\.googleusercontent\\.com\\1\\b"
       confidence: high
+
   - pattern:
-      name: MailChimp API key
-      regex: "(?i)(mailchimp|mc)(.{0,20})?[0-9a-f]{32}-us[0-9]{1,2}"
+      name: Google Client Secret
+      regex: "(?i)\\bGOOGLE_CLIENT_SECRET\\s*=\\s*(['\"])?GOCSPX-[0-9A-Za-z\\-_]{20,40}\\1\\b"
       confidence: high
+
+  # ------------------------
+  # PaaS & Container Credentials
+  # ------------------------
+
   - pattern:
-      name: Mailgun API key
-      regex: "(?i)((mailgun|mg)(.{0,20})?)?key-[0-9a-z]{32}"
+      name: Heroku API Key
+      regex: "(?i)\\bheroku.{0,20}['\"][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}['\"]\\b"
       confidence: high
+
+  # ------------------------
+  # Email & Messaging Services
+  # ------------------------
+
   - pattern:
-      name: PayPal Braintree access token
-      regex: "access_token\\$production\\$[0-9a-z]{16}\\$[0-9a-f]{32}"
+      name: MailChimp API Key
+      regex: "(?i)\\b(?:mailchimp|mc).{0,20}['\"][0-9a-f]{32}-us[0-9]{1,2}['\"]\\b"
       confidence: high
+
   - pattern:
-      name: Picatic API key
-      regex: "sk_live_[0-9a-z]{32}"
+      name: Mailgun API Key
+      regex: "(?i)\\b(?:(?:mailgun|mg).{0,20})?['\"][0-9a-z]{32}['\"]\\b"
       confidence: high
+
+  # ------------------------
+  # Payment & Financial Services
+  # ------------------------
+
+  - pattern:
+      name: PayPal Braintree Access Token
+      regex: "(?i)\\baccess_token\\$production\\$[0-9a-z]{16}\\$[0-9a-f]{32}\\b"
+      confidence: high
+
+  - pattern:
+      name: Picatic API Key
+      regex: "(?i)\\bsk_live_[0-9a-z]{32}\\b"
+      confidence: high
+
   - pattern:
       name: SendGrid API Key
-      regex: "SG\\.[\\w_]{16,32}\\.[\\w_]{16,64}"
+      regex: "(?i)\\bSG\\.[\\w_]{16,32}\\.[\\w_]{16,64}\\b"
       confidence: high
+
   - pattern:
-      name: Slack Webhook
-      regex: "https://hooks.slack.com/services/T[a-zA-Z0-9_]{8}/B[a-zA-Z0-9_]{8,12}/[a-zA-Z0-9_]{24}"
+      name: Stripe API Key
+      regex: "(?i)\\bstripe.{0,20}(?:sk|rk)_live_[0-9A-Za-z]{24}\\b"
       confidence: high
+
   - pattern:
-      name: Stripe API key
-      regex: "(?i)stripe(.{0,20})?(?:sk|rk)_live_[0-9a-zA-Z]{24}"
+      name: Square Access Token
+      regex: "(?i)\\bsq0atp-[0-9A-Za-z_\\-]{22}\\b"
       confidence: high
+
   - pattern:
-      name: Square access token
-      regex: "sq0atp-[0-9A-Za-z\\-_]{22}"
+      name: Square OAuth Secret
+      regex: "(?i)\\bsq0csp-[0-9A-Za-z_\\-]{43}\\b"
       confidence: high
+
   - pattern:
-      name: Square OAuth secret
-      regex: "sq0csp-[0-9A-Za-z\\\\-_]{43}"
+      name: Twilio API Key
+      regex: "(?i)\\btwilio.{0,20}['\"][0-9a-f]{32}['\"]\\b"
       confidence: high
-  - pattern:
-      name: Twilio API key
-      regex: "(?i)twilio(.{0,20})?['\\\"][0-9a-f]{32}['\\\"]"
-      confidence: high
+
+  # ------------------------
+  # Monitoring & Infrastructure Tools
+  # ------------------------
+
   - pattern:
       name: Dynatrace ttoken
-      regex: "dt0[a-zA-Z]{1}[0-9]{2}\\.[A-Z0-9]{24}\\.[A-Z0-9]{64}"
+      regex: "\\bdt0[a-zA-Z]{1}[0-9]{2}\\.[A-Z0-9]{24}\\.[A-Z0-9]{64}\\b"
       confidence: high
+
+  # ------------------------
+  # E-Commerce / SaaS Credentials
+  # ------------------------
+
   - pattern:
-      name: Shopify shared secret
-      regex: "shpss_[a-fA-F0-9]{32}"
+      name: Shopify Shared Secret
+      regex: "\\bshpss_[A-Fa-f0-9]{32}\\b"
       confidence: high
+
   - pattern:
-      name: Shopify access token
-      regex: "shpat_[a-fA-F0-9]{32}"
+      name: Shopify Access Token
+      regex: "\\bshpat_[A-Fa-f0-9]{32}\\b"
       confidence: high
+
   - pattern:
-      name: Shopify custom app access token
-      regex: "shpca_[a-fA-F0-9]{32}"
+      name: Shopify Custom App Access Token
+      regex: "\\bshpca_[A-Fa-f0-9]{32}\\b"
       confidence: high
+
   - pattern:
-      name: Shopify private app access token
-      regex: "shppa_[a-fA-F0-9]{32}"
+      name: Shopify Private App Access Token
+      regex: "\\bshppa_[A-Fa-f0-9]{32}\\b"
       confidence: high
+
+  # ------------------------
+  # Package Managers
+  # ------------------------
+
   - pattern:
-      name: PyPI upload token
-      regex: "pypi-AgEIcHlwaS5vcmc[A-Za-z0-9-_]{50,1000}"
+      name: PyPI Upload Token
+      regex: "\\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9-_]{50,1000}\\b"
       confidence: high
+
+  # ------------------------
+  # Application & Framework Configurations
+  # ------------------------
+
   - pattern:
-      name: AWS Access Key
-      regex: "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}"
+      name: WP-Config Secrets
+      regex: "\\bdefine.{0,20}(DB_CHARSET|NONCE_SALT|LOGGED_IN_SALT|AUTH_SALT|NONCE_KEY|DB_HOST|DB_PASSWORD|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|DB_NAME|DB_USER).{0,20}['|\"][^'\"]{10,120}['|\"]"
       confidence: high
-  - pattern:
-      name: AWS cred file info
-      regex: "(?i)(aws_access_key_id|aws_secret_access_key)(.{0,20})?=.[0-9a-zA-Z\\/+]{20,40}"
-      confidence: high
-  - pattern:
-      name: AWS Secret Key
-      regex: "(?i:aws(.{0,20})?)['\\\"][0-9a-zA-Z\\/+]{40}['\\\"]"
-      confidence: high
-  - pattern:
-      name: AWS MWS key
-      regex: "amzn\\.mws\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-      confidence: high
-  - pattern:
-      name: Facebook Secret Key
-      regex: "(?i:(facebook|fb)(.{0,20})?)['\\\"][0-9a-f]{32}['\\\"]"
-      confidence: high
-  - pattern:
-      name: Facebook Client ID
-      regex: "(?i)(facebook|fb)(.{0,20})?['\\\"][0-9]{13,17}['\\\"]"
-      confidence: high
-  - pattern:
-      name: Twitter Secret Key
-      regex: "(?i)twitter(.{0,20})?['\\\"][0-9a-z]{35,44}['\\\"]"
-      confidence: high
-  - pattern:
-      name: Twitter Client ID
-      regex: "(?i)twitter(.{0,20})?['\\\"][0-9a-z]{18,25}['\\\"]"
-      confidence: high
-  - pattern:
-      name: Github
-      regex: "(?i)github(.{0,20})?['\\\"][0-9a-zA-Z]{35,40}['\\\"]"
-      confidence: high
-  - pattern:
-      name: LinkedIn Client ID
-      regex: "(?i)linkedin(.{0,20})?[0-9a-z]{12}"
-      confidence: high
-  - pattern:
-      name: LinkedIn Secret Key
-      regex: "(?i)linkedin(.{0,20})?['\\\"][0-9a-z]{16}['\\\"]"
-      confidence: high
-  - pattern:
-      name: Slack
-      regex: "xox[baprs]-([0-9a-zA-Z]{10,48})?"
-      confidence: high
-  - pattern:
-      name: EC
-      regex: "-----BEGIN EC PRIVATE KEY-----"
-      confidence: high
-  - pattern:
-      name: Google API key
-      regex: "AIza[0-9A-Za-z\\\\-_]{35}"
-      confidence: high
-  - pattern:
-      name: Heroku API key
-      regex: "(?i)heroku(.{0,20})?['\\\"][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}['\\\"]"
-      confidence: high
-  - pattern:
-      name: MailChimp API key
-      regex: "(?i)(mailchimp|mc)(.{0,20})?['\\\"][0-9a-f]{32}-us[0-9]{1,2}['\\\"]"
-      confidence: high
-  - pattern:
-      name: Mailgun API key
-      regex: "(?i)((mailgun|mg)(.{0,20})?)?['\\\"][0-9a-z]{32}['\\\"]"
-      confidence: high
-  - pattern:
-      name: PayPal Braintree access token
-      regex: "access_token\\$production\\$[0-9a-z]{16}\\$[0-9a-f]{32}"
-      confidence: high
-  - pattern:
-      name: Picatic API key
-      regex: "sk_live_[0-9a-z]{32}"
-      confidence: high
-  - pattern:
-      name: Slack Webhook
-      regex: "https://hooks.slack.com/services/T[a-zA-Z0-9_]{8}/B[a-zA-Z0-9_]{8}/[a-zA-Z0-9_]{24}"
-      confidence: high
-  - pattern:
-      name: Stripe API key
-      regex: "(?i)stripe(.{0,20})?(?:sk|rk)_live_[0-9a-zA-Z]{24}"
-      confidence: high
-  - pattern:
-      name: Square access token
-      regex: "sq0atp-[0-9A-Za-z\\-_]{22}"
-      confidence: high
-  - pattern:
-      name: Square OAuth secret
-      regex: "sq0csp-[0-9A-Za-z\\\\-_]{43}"
-      confidence: high
-  - pattern:
-      name: Twilio API key
-      regex: "(?i)twilio(.{0,20})?['\\\"][0-9a-f]{32}['\\\"]"
-      confidence: high
+
+  # ------------------------
+  # Environment Variables vs. Generic Credentials
+  # ------------------------
+
   - pattern:
       name: Env Var
-      regex: "(?i)(apikey|secret|key|api|password|pass|pw|host)=[0-9a-zA-Z-_.{}]{4,120}"
+      regex: "(?i)\\b(?:apikey|secret|key|api|password|pass|pw|host)=[0-9A-Za-z\\-_.{}]{4,120}\\b"
       confidence: high
+
   - pattern:
       name: Generic Credential
-      regex: "(?i)(dbpasswd|dbuser|dbname|dbhost|api_key|apikey|secret|key|api|password|user|guid|hostname|pw|auth)(.{0,20})?['|\"]([0-9a-zA-Z-_\\/+!{}/=]{4,120})['|\"]"
+      regex: "(?i)\\b(?:dbpasswd|dbuser|dbname|dbhost|api[_-]?key|secret|key|api|password|user|guid|hostname|pw|auth)\\b\\s*[=:]\\s*(['\"])([0-9A-Za-z\\-_\\/+!{}=]{4,120})\\1"
       confidence: high
+
+  # Optionally, a very generic catch-all could be added with low confidence:
   - pattern:
-      name: WP-Config
-      regex: "define(.{0,20})?(DB_CHARSET|NONCE_SALT|LOGGED_IN_SALT|AUTH_SALT|NONCE_KEY|DB_HOST|DB_PASSWORD|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|DB_NAME|DB_USER)(.{0,20})?['|\"](.{10,120})['|\"]"
+      name: Very Generic Credential
+      regex: "(?i)(dbpasswd|dbuser|dbname|dbhost|api_key|apikey|secret|key|api|password|user|guid|hostname|pw|auth)(.{0,20})?['|\"]([0-9A-Za-z\\-_\\/+!{}/=]{4,120})['|\"]"
+      confidence: low
+
+  # ------------------------
+  # Miscellaneous
+  # ------------------------
+
+  - pattern:
+      name: Email Address
+      regex: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
       confidence: high
+
+  - pattern:
+      name: JWT Token
+      regex: "(?i)\\beyJ[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\b"
+      confidence: medium
+
+  - pattern:
+      name: SQL Server Connection String
+      regex: "(?i)\\bServer\\s*=\\s*(?:[A-Za-z0-9\\-.]+|\\d{1,3}(?:\\.\\d{1,3}){3})\\s*;\\s*Database\\s*=\\s*[^;]+\\s*;\\s*User\\s*(?:Id|ID)\\s*=\\s*[^;]+\\s*;\\s*Password\\s*=\\s*[^;]+(?:;|$)"
+      confidence: high
+
+  - pattern:
+      name: HTTP Basic Auth Header
+      regex: "(?i)^Authorization:\\s*Basic\\s+[A-Za-z0-9+/=]+"
+      confidence: medium
+
+  - pattern:
+      name: MongoDB URI
+      regex: "(?i)\\bmongodb(?:\\+srv)?:\\/\\/[A-Za-z0-9_.-]+(?::[A-Za-z0-9_@%$#-]+)?@(?:[A-Za-z0-9_.-]+)(?::\\d+)?(?:\\/[A-Za-z0-9_.-]+)?\\b"
+      confidence: medium
+
+  - pattern:
+      name: URL or IP Address Path
+      regex: "\\b(?:https?:\\/\\/(?:[a-zA-Z0-9\\-]+\\.)+[a-zA-Z]{2,}(?::\\d+)?(?:\\/[^\\s'\"<>]*)?|\\d{1,3}(?:\\.\\d{1,3}){3}(?::\\d+)?(?:\\/[^\\s'\"<>]*)?)\\b"
+      confidence: high
+
+  - pattern:
+      name: AWS IAM ARN
+      regex: "\\barn:aws:iam::\\d{12}:(?:role|instance-profile)\\/[^\\s\"]+\\b"
+      confidence: high
+
+  - pattern:
+      name: Azure Storage Connection String
+      regex: "\\bDefaultEndpointsProtocol=https;AccountName=[A-Za-z0-9]+;AccountKey=[A-Za-z0-9+/=]+;EndpointSuffix=core\\.windows\\.net\\b"
+      confidence: high
+
+  # ------------------------
+  # AI Tools & Emerging Credential Formats
+  # ------------------------
+
+  - pattern:
+      name: OpenAI API Key
+      regex: "(?i)\\bsk-[A-Za-z0-9]{32,48}\\b"
+      confidence: high
+
+  - pattern:
+      name: Anthropic Claude API Key
+      regex: "(?i)\\bsk-ant-[A-Za-z0-9]{32,48}\\b"
+      confidence: high
+
+  - pattern:
+      name: Hugging Face API Key
+      regex: "(?i)\\bhf_[A-Za-z0-9]{36}\\b"
+      confidence: high
+
+  # ------------------------
+  # Application-Specific & Default Values
+  # ------------------------
+
+  - pattern:
+      name: Sonar JDBC URL
+      regex: "(?i)^\\s*-?\\s*sonar\\.jdbc\\.url\\s*=\\s*jdbc:postgresql:\\/\\/[A-Za-z0-9.-]+(?::\\d+)?\\/[A-Za-z0-9_-]+\\b"
+      confidence: high
+
+  - pattern:
+      name: Default Username (Admin/Root)
+      regex: "(?i)\\b(?:user(?:name)?|login)\\s*[:=]\\s*(['\"])?(admin|root)\\1\\b"
+      confidence: high
+
+  - pattern:
+      name: Default Credentials Pair
+      regex: "(?i)\\b(root|admin)\\s*[:=]\\s*([^\\s]+)\\b"
+      confidence: medium
