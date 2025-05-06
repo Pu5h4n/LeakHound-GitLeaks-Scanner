@@ -10,7 +10,8 @@ import argparse
 from jinja2 import Environment, FileSystemLoader
 from colorama import init, Fore
 from tqdm import tqdm
-from markupsafe import escape, Markup  # Import MarkupSafe functions
+from markupsafe import escape, Markup
+from datetime import datetime
 
 # Initialize Colorama for colored terminal output.
 init(autoreset=True)
@@ -18,6 +19,19 @@ init(autoreset=True)
 def log(message):
     # Log everything via tqdm.write.
     tqdm.write(message)
+
+def format_commit_date(date_str):
+    """Convert ISO commit date into a friendlier format: e.g. 'May 06, 2025 02:00 PM'."""
+    if date_str == "unknown":
+        return date_str
+    try:
+        if date_str.endswith("Z"):
+            dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ")
+        else:
+            dt = datetime.fromisoformat(date_str)
+        return dt.strftime("%B %d, %Y %I:%M %p")
+    except Exception:
+        return date_str
 
 class GitLeaksAsyncScanner:
     def __init__(self, github_token, patterns_file='git-leaks.yaml', concurrency=10,
@@ -43,7 +57,7 @@ class GitLeaksAsyncScanner:
         for entry in data.get('patterns', []):
             pattern_block = entry.get('pattern', {})
             regex = pattern_block.get('regex')
-            name = pattern_block.get('name', 'Unknown')
+            name  = pattern_block.get('name', 'Unknown')
             if regex:
                 try:
                     compiled = re.compile(regex, re.IGNORECASE)
@@ -60,12 +74,12 @@ class GitLeaksAsyncScanner:
             async with self.semaphore:
                 async with session.get(url, headers=headers) as resp:
                     if resp.status == 409:
-                        tqdm.write(Fore.WHITE + f"∅ Empty or conflict (409) encountered for URL: {url}")
+                        tqdm.write(Fore.WHITE + f"∅ Conflict (409) for URL: {url}")
                         return {}
                     if resp.status == 403 and (
                         "X-RateLimit-Remaining" not in resp.headers or
                         int(resp.headers.get("X-RateLimit-Remaining", "0")) == 0):
-                        tqdm.write(Fore.YELLOW + f"Rate limit reached for JSON fetch from {url}, waiting 60 seconds...")
+                        tqdm.write(Fore.YELLOW + f"Rate limit reached for JSON at {url}, waiting 60 sec...")
                         await asyncio.sleep(60)
                         continue
                     if resp.status == 200:
@@ -80,12 +94,12 @@ class GitLeaksAsyncScanner:
             async with self.semaphore:
                 async with session.get(url, headers=headers) as resp:
                     if resp.status == 409:
-                        tqdm.write(Fore.WHITE + f"∅ Empty or conflict (409) encountered for URL: {url}")
+                        tqdm.write(Fore.WHITE + f"∅ Conflict (409) for URL: {url}")
                         return None
                     if resp.status == 403 and (
                         "X-RateLimit-Remaining" not in resp.headers or
                         int(resp.headers.get("X-RateLimit-Remaining", "0")) == 0):
-                        tqdm.write(Fore.YELLOW + f"Rate limit reached for text fetch from {url}, waiting 60 seconds...")
+                        tqdm.write(Fore.YELLOW + f"Rate limit reached for text at {url}, waiting 60 sec...")
                         await asyncio.sleep(60)
                         continue
                     if resp.status == 200:
@@ -108,11 +122,12 @@ class GitLeaksAsyncScanner:
             tqdm.write(Fore.RED + "❌ Failed to check rate limit.")
             return 0
 
-    async def fetch_repos_of_user(self, session, username):
+    async def fetch_repos_of_user(self, session, username, include_forks=True):
         url = f"https://api.github.com/users/{username}/repos?per_page=100&type=all"
         data = await self._fetch_json(session, url, headers=self.headers)
         if data:
-            return [repo['full_name'] for repo in data]
+            # All repos are returned (fork exclusion removed)
+            return [repo["full_name"] for repo in data]
         else:
             tqdm.write(Fore.RED + f"❌ Failed to fetch repos for user {username}")
             return []
@@ -121,7 +136,7 @@ class GitLeaksAsyncScanner:
         url = f"https://api.github.com/repos/{repo_full_name}/git/trees/{ref}?recursive=1"
         data = await self._fetch_json(session, url, headers=self.headers)
         if data and "tree" in data:
-            return [item['path'] for item in data.get('tree', []) if item['type'] == 'blob']
+            return [item["path"] for item in data.get("tree", []) if item["type"] == "blob"]
         else:
             tqdm.write(Fore.WHITE + f"∅ No files found for {repo_full_name} at {ref}")
             return []
@@ -135,21 +150,21 @@ class GitLeaksAsyncScanner:
         if content:
             matches = []
             for pattern in self.patterns:
-                for match_obj in pattern['regex'].finditer(content):
+                for match_obj in pattern["regex"].finditer(content):
                     snippet = self.create_advanced_snippet(content, match_obj, context=40)
                     matches.append({
-                        'pattern_name': pattern['name'],
-                        'match': match_obj.group(),
-                        'line_number': content[:match_obj.start()].count('\n') + 1,
-                        'snippet': snippet
+                        "pattern_name": pattern["name"],
+                        "match": match_obj.group(),
+                        "line_number": content[:match_obj.start()].count("\n") + 1,
+                        "snippet": snippet
                     })
-            return {'file_path': file_path, 'matches': matches} if matches else None
+            return {"file_path": file_path, "matches": matches} if matches else None
         return None
 
     async def scan_repository(self, repo_full_name, session, ref="HEAD"):
         files = await self.fetch_file_list(session, repo_full_name, ref=ref)
         tqdm.write(Fore.CYAN + f"📂 Found {len(files)} files in {repo_full_name} ({ref})")
-        tasks = [self.scan_file(session, repo_full_name, file_path, ref=ref) for file_path in files]
+        tasks = [self.scan_file(session, repo_full_name, fp, ref=ref) for fp in files]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         clean_results = [r for r in results if r and not isinstance(r, Exception)]
         return clean_results
@@ -186,57 +201,55 @@ class GitLeaksAsyncScanner:
         if content:
             matches = []
             for pattern in self.patterns:
-                for match_obj in pattern['regex'].finditer(content):
+                for match_obj in pattern["regex"].finditer(content):
                     snippet = self.create_advanced_snippet(content, match_obj, context=40)
                     matches.append({
-                        'pattern_name': pattern['name'],
-                        'match': match_obj.group(),
-                        'line_number': content[:match_obj.start()].count('\n') + 1,
-                        'snippet': snippet
+                        "pattern_name": pattern["name"],
+                        "match": match_obj.group(),
+                        "line_number": content[:match_obj.start()].count("\n") + 1,
+                        "snippet": snippet
                     })
-            return {'file_path': file_path, 'matches': matches} if matches else None
+            return {"file_path": file_path, "matches": matches} if matches else None
         return None
 
     async def scan_commit(self, session, repo_full_name, commit_sha, commit_url):
         commit_detail = await self.fetch_commit_details(session, repo_full_name, commit_sha)
         if not commit_detail:
             return None
+        # Get commit date.
+        commit_date = commit_detail.get("commit", {}).get("author", {}).get("date", "unknown")
         changed_files = commit_detail.get("files", [])
         if changed_files:
             file_list = [f["filename"] for f in changed_files if f.get("status") != "removed"]
             if not file_list:
                 return None
         else:
-            tree_sha = commit_detail.get('commit', {}).get('tree', {}).get("sha")
+            tree_sha = commit_detail.get("commit", {}).get("tree", {}).get("sha")
             if not tree_sha:
                 tqdm.write(Fore.RED + f"❌ Could not get tree SHA for commit {commit_sha} in {repo_full_name}")
                 return None
             tree_url = f"https://api.github.com/repos/{repo_full_name}/git/trees/{tree_sha}?recursive=1"
             data = await self._fetch_json(session, tree_url, headers=self.headers)
             if data:
-                file_list = [item['path'] for item in data.get('tree', []) if item['type'] == 'blob']
+                file_list = [item["path"] for item in data.get("tree", []) if item["type"] == "blob"]
             else:
                 tqdm.write(Fore.RED + f"❌ Failed to fetch file list for {repo_full_name} at commit {commit_sha}")
                 return None
-        tasks = [self.scan_file_commit(session, repo_full_name, file_path, commit_sha) for file_path in file_list]
+        tasks = [self.scan_file_commit(session, repo_full_name, fp, commit_sha) for fp in file_list]
         file_results = await asyncio.gather(*tasks, return_exceptions=True)
-        results = [res for res in file_results if res and not isinstance(res, Exception)]
-        return results
+        results = []
+        for res in file_results:
+            if isinstance(res, dict) and res:
+                results.append(res)
+        return {"commit_date": commit_date, "results": results}
 
     def create_advanced_snippet(self, content, match_obj, context=40):
-        """
-        Create a snippet of the matched text with surrounding context.
-        This method uses MarkupSafe's escape function to convert any literal "<" and ">" 
-        into their HTML-escaped forms (i.e. "&lt;" and "&gt;") for all non-matched content,
-        while the inserted <mark class="highlight">…</mark> tags remain unescaped.
-        """
         start = match_obj.start()
         end = match_obj.end()
         snippet_start = max(0, start - context)
         snippet_end = min(len(content), end + context)
         prefix = "..." if snippet_start > 0 else ""
         suffix = "..." if snippet_end < len(content) else ""
-        # Concatenate parts as safe Markup so that our <mark> remains active.
         snippet = (
             Markup(prefix) +
             escape(content[snippet_start:start]) +
@@ -248,65 +261,112 @@ class GitLeaksAsyncScanner:
         )
         return snippet
 
-    def generate_unified_html_report(self, all_results, output_file='unified_report.html'):
+    def generate_unified_html_report(self, all_results, output_file=None):
         """
-        Generates a unified HTML report with the following features:
-          - A centered, bold header "GitLeaks Secret Report"
-          - A hamburger button at top‑left for the repository index panel
-          - Index search and main results search boxes for filtering
-          - Fieldsets for Hide/Show Patterns filtering the results table
-          - **Collapsible repository sections:** each repo header now includes a toggle icon 
-            (initially “[-]”) to collapse or expand the repository’s details.
+        Generates an HTML report with:
+          - A master "Hide All Patterns" filter that—when checked—hides all rows unless specific pattern filters are applied.
+          - Multi-select year filter via checkboxes.
+          - A Repository Filter (based on the repo’s has_secrets flag) to hide repositories with no secrets.
+          - For local folders, file links are plain text and commit date comes from the folder mtime.
+          - Commit dropdown options are highlighted with a red warning if secrets are present in old commits.
+          - A dedicated “Secrets in Old Commits” section shows a red warning message if any commit secrets are detected.
         """
-        # Deduplicate commit results.
+        if not output_file:
+            output_file = f"unified_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+
+        # Deduplicate commit results and ensure types.
         for repo in all_results:
             baseline = set()
-            if repo.get("results"):
-                for file in repo["results"]:
-                    for match in file.get("matches", []):
-                        baseline.add((file["file_path"], match["pattern_name"], match["match"]))
+            if repo.get("results") and isinstance(repo.get("results"), list):
+                new_results = []
+                for file in repo.get("results"):
+                    if isinstance(file, dict):
+                        for match in file.get("matches", []):
+                            baseline.add((file["file_path"], match["pattern_name"], match["match"]))
+                        new_results.append(file)
+                repo["results"] = new_results
+
             new_commit_results = []
-            for commit in repo.get("commit_results", []):
-                new_commit_files = []
-                if not commit.get("results"):
-                    continue
-                for file in commit["results"]:
-                    new_matches = []
-                    for match in file.get("matches", []):
-                        signature = (file["file_path"], match["pattern_name"], match["match"])
-                        if signature not in baseline:
-                            new_matches.append(match)
-                            baseline.add(signature)
-                    if new_matches:
-                        new_commit_files.append({"file_path": file["file_path"], "matches": new_matches})
-                if new_commit_files:
-                    commit["results"] = new_commit_files
-                    new_commit_results.append(commit)
+            if repo.get("commit_results") and isinstance(repo.get("commit_results"), list):
+                for commit in repo.get("commit_results", []):
+                    new_commit_files = []
+                    if not commit.get("results"):
+                        continue
+                    for file in commit["results"]:
+                        if not isinstance(file, dict):
+                            continue
+                        new_matches = []
+                        for match in file.get("matches", []):
+                            signature = (file["file_path"], match["pattern_name"], match["match"])
+                            if signature not in baseline:
+                                new_matches.append(match)
+                                baseline.add(signature)
+                        if new_matches:
+                            new_commit_files.append({"file_path": file["file_path"], "matches": new_matches})
+                    if new_commit_files:
+                        commit["results"] = new_commit_files
+                        new_commit_results.append(commit)
             repo["commit_results"] = new_commit_results
 
-        # Build repository index grouped by username.
+            # Determine whether a repo has secrets.
+            has_head = repo.get("results") and len(repo.get("results")) > 0
+            has_commit = repo.get("commit_results") and any(commit.get("results") for commit in repo.get("commit_results"))
+            repo["has_secrets"] = "true" if (has_head or has_commit) else "false"
+
+            if "head_commit_date" not in repo:
+                if repo.get("commit_results") and len(repo["commit_results"]) > 0:
+                    repo["head_commit_date"] = repo["commit_results"][0].get("commit_date", "unknown")
+                else:
+                    repo["head_commit_date"] = "unknown"
+            if not repo.get("is_local"):
+                if repo.get("head_commit_date") and repo["head_commit_date"] != "unknown":
+                    repo["head_commit_date"] = format_commit_date(repo["head_commit_date"])
+                    try:
+                        repo["commit_year"] = datetime.strptime(repo["head_commit_date"], "%B %d, %Y %I:%M %p").strftime("%Y")
+                    except Exception:
+                        repo["commit_year"] = "unknown"
+                else:
+                    repo["commit_year"] = "unknown"
+
+            if repo.get("commit_results"):
+                for commit in repo.get("commit_results"):
+                    if commit.get("commit_date") and commit["commit_date"] != "unknown":
+                        commit["commit_date"] = format_commit_date(commit["commit_date"])
+
+        # Build repository index grouped by username (or local folder basename).
         repo_index = {}
         for repo in all_results:
-            username = repo['repo_full_name'].split("/")[0]
-            repo_index.setdefault(username, []).append(repo['repo_full_name'])
+            if repo.get("is_local"):
+                username = os.path.basename(repo["repo_full_name"])
+            else:
+                username = repo["repo_full_name"].split("/")[0]
+            repo_index.setdefault(username, []).append(repo["repo_full_name"])
         repo_index = dict(sorted(repo_index.items()))
 
         # Gather unique patterns.
         unique_patterns = set()
         for repo in all_results:
             if repo.get("results"):
-                for file in repo["results"]:
-                    for m in file.get("matches", []):
-                        unique_patterns.add(m["pattern_name"])
+                for file in repo.get("results", []):
+                    if isinstance(file, dict):
+                        for m in file.get("matches", []):
+                            unique_patterns.add(m["pattern_name"])
             if repo.get("commit_results"):
-                for commit in repo["commit_results"]:
+                for commit in repo.get("commit_results"):
                     if commit.get("results"):
-                        for file in commit["results"]:
-                            for m in file.get("matches", []):
-                                unique_patterns.add(m["pattern_name"])
+                        for file in commit.get("results", []):
+                            if isinstance(file, dict):
+                                for m in file.get("matches", []):
+                                    unique_patterns.add(m["pattern_name"])
         unique_patterns = sorted(unique_patterns)
 
-        # The HTML template now includes collapse/expand functionality for each repository.
+        # Gather unique years for the multi-select filter.
+        years = set()
+        for repo in all_results:
+            if repo.get("commit_year") and repo["commit_year"] != "unknown":
+                years.add(repo["commit_year"])
+        unique_years = sorted(years)
+
         template_str = r'''
         <!DOCTYPE html>
         <html lang="en">
@@ -334,9 +394,7 @@ class GitLeaksAsyncScanner:
               margin-left: 270px;
               transition: margin-left 0.3s ease;
             }
-            body.panel-hidden {
-              margin-left: 20px;
-            }
+            body.panel-hidden { margin-left: 20px; }
             header {
               text-align: center;
               font-weight: bold;
@@ -346,7 +404,6 @@ class GitLeaksAsyncScanner:
               color: var(--header-text);
               position: relative;
             }
-            /* Hamburger stays at top‑left */
             #toggleButton {
               position: absolute;
               left: 10px;
@@ -360,7 +417,6 @@ class GitLeaksAsyncScanner:
               border-radius: 4px;
               z-index: 1000;
             }
-            /* Main results search (top‑right corner) */
             #mainSearchContainer {
               position: absolute;
               right: 10px;
@@ -382,7 +438,6 @@ class GitLeaksAsyncScanner:
               margin-left: 5px;
               padding: 2px;
             }
-            /* Repository index panel */
             #repo-index {
               position: fixed;
               top: 0;
@@ -396,14 +451,8 @@ class GitLeaksAsyncScanner:
               box-shadow: 2px 0 8px rgba(0,0,0,0.3);
               transition: transform 0.3s ease;
             }
-            #repo-index.hidden {
-              transform: translateX(-260px);
-            }
-            #repo-index h3 {
-              border-bottom: 1px solid var(--border-color);
-              padding-bottom: 8px;
-              margin-bottom: 15px;
-            }
+            #repo-index.hidden { transform: translateX(-260px); }
+            #repo-index h3 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; margin-bottom: 15px; }
             .user-block h4 {
               cursor: pointer;
               margin: 10px 0 5px;
@@ -411,21 +460,14 @@ class GitLeaksAsyncScanner:
               overflow: hidden;
               text-overflow: ellipsis;
             }
-            .user-block ul {
-              list-style: none;
-              padding-left: 15px;
-              margin-bottom: 15px;
-            }
+            .user-block ul { list-style: none; padding-left: 15px; margin-bottom: 15px; }
             .user-block li {
               margin: 5px 0;
               white-space: nowrap;
               overflow: hidden;
               text-overflow: ellipsis;
             }
-            /* Repository index search (auto filter) */
-            #indexSearchContainer {
-              margin: 20px 0 20px 0;
-            }
+            #indexSearchContainer { margin-bottom: 20px; }
             #indexSearchInput {
               width: 100%;
               padding: 5px;
@@ -433,6 +475,22 @@ class GitLeaksAsyncScanner:
               border-radius: 4px;
               background: var(--filter-bg);
               color: var(--filter-text);
+            }
+            .filter-fieldset {
+              display: block;
+              margin-bottom: 20px;
+              padding: 10px;
+              border: 1px solid var(--border-color);
+              border-radius: 5px;
+              background-color: var(--table-bg);
+            }
+            .filter-fieldset legend { font-size: 1rem; color: var(--header-text); padding: 0 5px; }
+            .filter-fieldset label {
+              display: block;
+              margin-bottom: 5px;
+              white-space: nowrap;
+              overflow: hidden;
+              text-overflow: ellipsis;
             }
             table {
               width: 100%;
@@ -445,57 +503,17 @@ class GitLeaksAsyncScanner:
               padding: 8px;
               text-align: left;
             }
-            th {
-              background-color: var(--header-bg);
-              color: var(--header-text);
-            }
-            tr:hover {
-              background-color: #2a2a2a;
-            }
-            a {
-              text-decoration: none;
-              color: var(--link-color);
-            }
-            a:hover {
-              text-decoration: underline;
-            }
+            th { background-color: var(--header-bg); color: var(--header-text); }
+            tr:hover { background-color: #2a2a2a; }
+            a { text-decoration: none; color: var(--link-color); }
+            a:hover { text-decoration: underline; }
             .repository-section {
               border: 2px solid var(--border-color);
               padding: 15px;
               margin-bottom: 30px;
               border-radius: 8px;
             }
-            .hidden {
-              display: none;
-            }
-            .filter-fieldset {
-              display: inline-block;
-              vertical-align: top;
-              margin-right: 15px;
-              padding: 10px;
-              border: 1px solid var(--border-color);
-              border-radius: 5px;
-              background-color: var(--table-bg);
-              margin-top: 20px;
-              width: 100%;
-              box-sizing: border-box;
-            }
-            .filter-fieldset legend {
-              font-size: 1rem;
-              color: var(--header-text);
-              padding: 0 5px;
-            }
-            .filter-fieldset label {
-              display: block;
-              margin-bottom: 5px;
-              white-space: nowrap;
-              overflow: hidden;
-              text-overflow: ellipsis;
-            }
-            .dataRow {
-              transition: background 0.2s ease;
-            }
-            /* Highlight for matched regex snippets */
+            .hidden { display: none; }
             mark.highlight {
               background-color: #FFD700;
               color: #000;
@@ -503,7 +521,10 @@ class GitLeaksAsyncScanner:
               padding: 0 2px;
               border-radius: 3px;
             }
-            /* Light theme overrides */
+            .old-commit-secrets { margin-bottom: 20px; }
+            .warning-text {
+              color: #FF0000;
+            }
             body.white-theme {
               --bg-color: #ffffff;
               --text-color: #000000;
@@ -518,7 +539,6 @@ class GitLeaksAsyncScanner:
             }
           </style>
           <script>
-            /* =============== INDEX SEARCH (LEFT PANEL) =============== */
             function toggleRepoIndex() {
               var repoIndex = document.getElementById("repo-index");
               repoIndex.classList.toggle("hidden");
@@ -526,7 +546,7 @@ class GitLeaksAsyncScanner:
             }
             function toggleUserRepos(username) {
               var list = document.getElementById("repos_" + username);
-              if(list.style.display === "none"){
+              if (list.style.display === "none") {
                 list.style.display = "block";
               } else {
                 list.style.display = "none";
@@ -535,13 +555,13 @@ class GitLeaksAsyncScanner:
             function indexSearchKeyup() {
               var input = document.getElementById("indexSearchInput").value.toLowerCase();
               var userBlocks = document.getElementsByClassName("user-block");
-              for(var i=0; i<userBlocks.length; i++){
+              for (var i = 0; i < userBlocks.length; i++) {
                 var username = userBlocks[i].getAttribute("data-username").toLowerCase();
                 var repos = userBlocks[i].getElementsByTagName("li");
                 var matchUser = username.indexOf(input) > -1;
                 var hasMatch = matchUser;
-                for(var j=0; j<repos.length; j++){
-                  if(repos[j].textContent.toLowerCase().indexOf(input) > -1){
+                for (var j = 0; j < repos.length; j++) {
+                  if (repos[j].textContent.toLowerCase().indexOf(input) > -1) {
                     repos[j].style.display = "list-item";
                     hasMatch = true;
                   } else {
@@ -551,77 +571,136 @@ class GitLeaksAsyncScanner:
                 userBlocks[i].style.display = hasMatch ? "block" : "none";
               }
             }
-            /* =============== MAIN RESULTS FILTERS (Hide/Show Patterns + searchInput) =============== */
+            // Define a helper function to update all filters.
+            function updateFilters() {
+              updateResultsFilters();
+              updateRepositorySections();
+            }
+            // Pattern filtering:
+            function updatePatternCheckboxes(event) {
+              if (event.target.id === "hideAllPatterns") {
+                if (event.target.checked) {
+                  var patternCheckboxes = document.querySelectorAll(".pattern-checkbox");
+                  patternCheckboxes.forEach(function(cb) {
+                    cb.checked = false;
+                  });
+                }
+              } else {
+                // If any specific pattern checkbox is selected while "Hide All Patterns" is checked,
+                // uncheck the "Hide All Patterns" checkbox.
+                if (event.target.checked && document.getElementById("hideAllPatterns").checked) {
+                  document.getElementById("hideAllPatterns").checked = false;
+                }
+              }
+              updateFilters();
+            }
             function updateResultsFilters() {
               var mainSearch = document.getElementById("searchInput").value.toLowerCase();
-              var hideCheck = document.querySelectorAll(".pattern-checkbox.hide:checked");
-              var hidePatterns = [];
-              for(var i=0; i<hideCheck.length; i++){
-                hidePatterns.push(hideCheck[i].value.toLowerCase());
-              }
-              var showCheck = document.querySelectorAll(".pattern-checkbox.show:checked");
-              var showPatterns = [];
-              for(var i=0; i<showCheck.length; i++){
-                showPatterns.push(showCheck[i].value.toLowerCase());
+              var hideAll = document.getElementById("hideAllPatterns").checked;
+              var patternCheckboxes = document.querySelectorAll(".pattern-checkbox");
+              var activePatterns = [];
+              for (var i = 0; i < patternCheckboxes.length; i++) {
+                if (patternCheckboxes[i].checked) {
+                  activePatterns.push(patternCheckboxes[i].value.toLowerCase());
+                }
               }
               var rows = document.getElementsByClassName("dataRow");
-              for(var j=0; j<rows.length; j++){
+              for (var j = 0; j < rows.length; j++) {
                 var rowText = rows[j].textContent.toLowerCase();
                 var pattern = rows[j].getAttribute("data-pattern").toLowerCase();
                 var matchesSearch = (rowText.indexOf(mainSearch) !== -1);
-                var hiddenByHideList = (hidePatterns.indexOf(pattern) !== -1);
-                var forcedByShowList = (showPatterns.length === 0 || showPatterns.indexOf(pattern) !== -1);
-                if(matchesSearch && !hiddenByHideList && forcedByShowList){
-                  rows[j].style.display = "";
+                if (activePatterns.length > 0) {
+                  // When one or more patterns are selected, show only rows that match those patterns and the search.
+                  if (activePatterns.indexOf(pattern) > -1 && matchesSearch) {
+                    rows[j].style.display = "";
+                  } else {
+                    rows[j].style.display = "none";
+                  }
                 } else {
-                  rows[j].style.display = "none";
+                  // If no specific pattern is selected, then rely on the master toggle.
+                  if (hideAll) {
+                    rows[j].style.display = "none";
+                  } else {
+                    rows[j].style.display = matchesSearch ? "" : "none";
+                  }
                 }
               }
             }
+            function updateRepositorySections() {
+              // Get active years from the year checkboxes.
+              var yearCheckboxes = document.querySelectorAll(".year-checkbox");
+              var activeYears = [];
+              for (var i = 0; i < yearCheckboxes.length; i++) {
+                if (yearCheckboxes[i].checked) {
+                  activeYears.push(yearCheckboxes[i].value);
+                }
+              }
+              // Get the state of the "hide repositories with no secrets" checkbox.
+              var hideNoSecrets = document.getElementById("hideNoSecrets").checked;
+              var repoSections = document.getElementsByClassName("repository-section");
+              for (var i = 0; i < repoSections.length; i++) {
+                var repo = repoSections[i];
+                var repoYear = repo.getAttribute("data-year");
+                // Determine if the repository's commit year is among the active years.
+                var yearMatch = activeYears.indexOf(repoYear) > -1;
+                // Check for at least one visible secret row in the repository section.
+                var secretRows = repo.querySelectorAll(".dataRow");
+                var visibleSecretExists = false;
+                for (var j = 0; j < secretRows.length; j++) {
+                  if (secretRows[j].style.display !== "none") {
+                    visibleSecretExists = true;
+                    break;
+                  }
+                }
+                var hasSecrets = repo.getAttribute("data-has-secrets") === "true";
+                if (hasSecrets) {
+                  if (yearMatch && visibleSecretExists) {
+                    repo.style.display = "";
+                  } else {
+                    repo.style.display = "none";
+                  }
+                } else {
+                  repo.style.display = hideNoSecrets ? "none" : "";
+                }
+              }
+            }
+            function switchCommit(repoId, version) {
+              var containers = document.querySelectorAll("[id^='repoOutput_" + repoId + "_']");
+              for (var i = 0; i < containers.length; i++) {
+                containers[i].classList.add("hidden");
+              }
+              var selected = document.getElementById("repoOutput_" + repoId + "_" + version);
+              if (selected) selected.classList.remove("hidden");
+              var selectElem = document.getElementById("commitSelect_" + repoId);
+              var selectedOption = selectElem.options[selectElem.selectedIndex];
+              var commitDate = selectedOption.getAttribute("data-commit-date") || "unknown";
+              document.getElementById("commitDate_" + repoId).textContent = commitDate;
+            }
             function toggleTheme() {
               var select = document.getElementById("themeToggle");
-              if(select.value === "white") {
+              if (select.value === "white") {
                 document.body.classList.add("white-theme");
               } else {
                 document.body.classList.remove("white-theme");
               }
             }
-            function switchCommit(repoId, version) {
-              var containers = document.querySelectorAll("[id^='repoOutput_" + repoId + "_']");
-              for(var i=0; i<containers.length; i++){
-                containers[i].classList.add("hidden");
-              }
-              var selected = document.getElementById("repoOutput_" + repoId + "_" + version);
-              if(selected) selected.classList.remove("hidden");
-            }
-            /* =============== Repository Collapse/Expand =============== */
-            function toggleRepoDetails(repoId) {
-              var details = document.getElementById("repoDetails_" + repoId);
-              var toggleIndicator = document.getElementById("toggleRepo_" + repoId);
-              if (details.style.display === "none") {
-                details.style.display = "block";
-                toggleIndicator.textContent = "[-]";
-              } else {
-                details.style.display = "none";
-                toggleIndicator.textContent = "[+]";
-              }
-            }
             window.onload = function() {
-              document.getElementById("searchInput").addEventListener("keyup", updateResultsFilters);
+              document.getElementById("searchInput").addEventListener("keyup", updateFilters);
               document.getElementById("indexSearchInput").addEventListener("keyup", indexSearchKeyup);
-              var hideCbs = document.querySelectorAll(".pattern-checkbox.hide");
-              var showCbs = document.querySelectorAll(".pattern-checkbox.show");
-              for(var i=0; i<hideCbs.length; i++){
-                hideCbs[i].addEventListener("change", updateResultsFilters);
+              var patternCbs = document.querySelectorAll(".pattern-checkbox, #hideAllPatterns");
+              for (var i = 0; i < patternCbs.length; i++) {
+                patternCbs[i].addEventListener("change", updatePatternCheckboxes);
               }
-              for(var i=0; i<showCbs.length; i++){
-                showCbs[i].addEventListener("change", updateResultsFilters);
+              var yearCbs = document.querySelectorAll(".year-checkbox");
+              for (var i = 0; i < yearCbs.length; i++) {
+                yearCbs[i].addEventListener("change", updateFilters);
               }
+              document.getElementById("hideNoSecrets").addEventListener("change", updateFilters);
+              updateFilters();
             };
           </script>
         </head>
         <body>
-          <!-- Header with center title & hamburger top‑left -->
           <header>
             GitLeaks Secret Report
             <button id="toggleButton" onclick="toggleRepoIndex()">☰</button>
@@ -633,7 +712,6 @@ class GitLeaksAsyncScanner:
               </select>
             </div>
           </header>
-          <!-- Left panel: repository index + patterns fieldsets -->
           <div id="repo-index">
             <div id="indexSearchContainer">
               <input type="text" id="indexSearchInput" placeholder="Search index...">
@@ -646,41 +724,39 @@ class GitLeaksAsyncScanner:
                 </h4>
                 <ul id="repos_{{ username|replace(' ', '_') }}">
                   {% for repo in repos %}
-                    <li>
-                      <a href="#{{ repo|replace('/', '_') }}" title="{{ repo }}">
-                        {{ repo }}
-                      </a>
-                    </li>
+                    <li><a href="#{{ repo|replace('/', '_') }}" title="{{ repo }}">{{ repo }}</a></li>
                   {% endfor %}
                 </ul>
               </div>
             {% endfor %}
-            <!-- Fieldsets for Hide/Show Patterns -->
+            <!-- Unified Patterns Filter -->
             <fieldset class="filter-fieldset">
-              <legend>Hide Patterns</legend>
+              <legend>Patterns</legend>
+              <label><input type="checkbox" id="hideAllPatterns" checked> Hide All Patterns</label>
               {% for pattern in unique_patterns %}
-                <label>
-                  <input type="checkbox" class="pattern-checkbox hide" value="{{ pattern }}"> {{ pattern }}
-                </label>
+                <label><input type="checkbox" class="pattern-checkbox" value="{{ pattern }}"> {{ pattern }}</label>
               {% endfor %}
             </fieldset>
+            <!-- Multi-select Year Filter -->
             <fieldset class="filter-fieldset">
-              <legend>Show Only Patterns</legend>
-              {% for pattern in unique_patterns %}
-                <label>
-                  <input type="checkbox" class="pattern-checkbox show" value="{{ pattern }}"> {{ pattern }}
-                </label>
+              <legend>Filter by Year</legend>
+              {% for year in unique_years %}
+                <label><input type="checkbox" class="year-checkbox" value="{{ year }}" checked> {{ year }}</label>
               {% endfor %}
+            </fieldset>
+            <!-- Repository Filter -->
+            <fieldset class="filter-fieldset">
+              <legend>Repository Filter</legend>
+              <label><input type="checkbox" id="hideNoSecrets" checked onchange="updateFilters()"> Hide repositories with no secrets</label>
             </fieldset>
           </div>
-          <!-- Main content: repository results -->
           <div style="margin-top:20px;">
             {% for repo in repos %}
               {% set safe_repo = repo.repo_full_name|replace("/", "_") %}
-              <div class="repository-section" id="{{ safe_repo }}">
+              <div class="repository-section" id="{{ safe_repo }}" data-has-secrets="{{ repo.has_secrets }}" data-year="{{ repo.commit_year }}">
                 <h2>
                   <span id="toggleRepo_{{ safe_repo }}" style="cursor:pointer;" onclick="toggleRepoDetails('{{ safe_repo }}')">[-]</span>
-                  📁 <a href="https://github.com/{{ repo.repo_full_name }}" target="_blank" title="{{ repo.repo_full_name }}">
+                  📁 <a href="{% if not repo.is_local %}https://github.com/{{ repo.repo_full_name }}{% endif %}" target="_blank" title="{{ repo.repo_full_name }}">
                     {{ repo.repo_full_name }}
                   </a>
                 </h2>
@@ -688,12 +764,21 @@ class GitLeaksAsyncScanner:
                   <div style="margin-bottom:10px;">
                     <label for="commitSelect_{{ safe_repo }}">Select Version:</label>
                     <select id="commitSelect_{{ safe_repo }}" onchange="switchCommit('{{ safe_repo }}', this.value)">
-                      <option value="HEAD" selected>HEAD</option>
+                      <option value="HEAD" data-commit-date="{{ repo.head_commit_date|default('unknown') }}">HEAD</option>
                       {% for commit in repo.commit_results %}
-                        <option value="{{ commit.commit_id }}">{{ commit.commit_id }}</option>
+                        <option value="{{ commit.commit_id }}" data-commit-date="{{ commit.commit_date }}" {% if commit.results %} style="background-color: #FF0000; color: #FFFFFF;" {% endif %}>
+                          {{ commit.commit_id }}{% if commit.results %} (Secrets in old commit){% endif %}
+                        </option>
                       {% endfor %}
                     </select>
                   </div>
+                  <p id="commitDateDisplay_{{ safe_repo }}">Commit Date: <span id="commitDate_{{ safe_repo }}">{{ repo.head_commit_date|default('unknown') }}</span></p>
+                  <!-- Secrets in Old Commits Section -->
+                  {% if repo.commit_results and (repo.commit_results|selectattr("results")|list|length > 0) %}
+                  <div class="old-commit-secrets">
+                    <h3 class="warning-text">Secrets in old commits detected.</h3>
+                  </div>
+                  {% endif %}
                   <div id="repoOutput_{{ safe_repo }}_HEAD">
                     {% if repo.results %}
                       <table>
@@ -706,12 +791,16 @@ class GitLeaksAsyncScanner:
                         {% for file in repo.results %}
                           {% for match in file.matches %}
                             <tr class="dataRow" data-pattern="{{ match.pattern_name }}">
-                              <td>{{ file.file_path }}</td>
                               <td>
-                                <a href="https://github.com/{{ repo.repo_full_name }}/blob/HEAD/{{ file.file_path }}#L{{ match.line_number }}" target="_blank">
-                                  {{ match.line_number }}
-                                </a>
+                                {% if repo.is_local %}
+                                  {{ file.file_path }}
+                                {% else %}
+                                  <a href="https://github.com/{{ repo.repo_full_name }}/blob/HEAD/{{ file.file_path }}#L{{ match.line_number }}" target="_blank">
+                                    {{ file.file_path }}
+                                  </a>
+                                {% endif %}
                               </td>
+                              <td>{{ match.line_number }}</td>
                               <td>{{ match.pattern_name }}</td>
                               <td>{{ match.snippet | safe }}</td>
                             </tr>
@@ -724,7 +813,8 @@ class GitLeaksAsyncScanner:
                   </div>
                   {% for commit in repo.commit_results %}
                     <div id="repoOutput_{{ safe_repo }}_{{ commit.commit_id }}" class="hidden">
-                      <h4>Commit: <a href="{{ commit.commit_url }}" target="_blank">{{ commit.commit_id }}</a></h4>
+                      <h4>Commit: <a href="{% if not repo.is_local %}{{ commit.commit_url }}{% endif %}" target="_blank">{{ commit.commit_id }}</a></h4>
+                      <p>Commit Date: {{ commit.commit_date }}</p>
                       {% if commit.results %}
                         <table>
                           <tr>
@@ -736,12 +826,16 @@ class GitLeaksAsyncScanner:
                           {% for file in commit.results %}
                             {% for match in file.matches %}
                               <tr class="dataRow" data-pattern="{{ match.pattern_name }}">
-                                <td>{{ file.file_path }}</td>
                                 <td>
-                                  <a href="https://github.com/{{ repo.repo_full_name }}/blob/{{ commit.commit_id }}/{{ file.file_path }}#L{{ match.line_number }}" target="_blank">
-                                    {{ match.line_number }}
-                                  </a>
+                                  {% if repo.is_local %}
+                                    {{ file.file_path }}
+                                  {% else %}
+                                    <a href="https://github.com/{{ repo.repo_full_name }}/blob/{{ commit.commit_id }}/{{ file.file_path }}#L{{ match.line_number }}" target="_blank">
+                                      {{ file.file_path }}
+                                    </a>
+                                  {% endif %}
                                 </td>
+                                <td>{{ match.line_number }}</td>
                                 <td>{{ match.pattern_name }}</td>
                                 <td>{{ match.snippet | safe }}</td>
                               </tr>
@@ -757,6 +851,19 @@ class GitLeaksAsyncScanner:
               </div>
             {% endfor %}
           </div>
+          <script>
+            function toggleRepoDetails(repoId) {
+              var details = document.getElementById("repoDetails_" + repoId);
+              var toggleIndicator = document.getElementById("toggleRepo_" + repoId);
+              if (details.style.display === "none") {
+                details.style.display = "block";
+                toggleIndicator.textContent = "[-]";
+              } else {
+                details.style.display = "none";
+                toggleIndicator.textContent = "[+]";
+              }
+            }
+          </script>
         </body>
         </html>
         '''
@@ -765,16 +872,70 @@ class GitLeaksAsyncScanner:
         html_content = template.render(
             repos=all_results,
             unique_patterns=unique_patterns,
-            repo_index=repo_index
+            repo_index=repo_index,
+            unique_years=unique_years
         )
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(html_content)
         tqdm.write(Fore.GREEN + f"✅ Unified HTML report saved: {output_file}")
 
+async def process_local_folder(folder_path, scanner):
+    """
+    Recursively scans the local folder.
+    For each file, reads its content and applies regex matching.
+    The folder's last modified time is used as the commit date.
+    """
+    results = []
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            full_path = os.path.join(root, file)
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except (UnicodeDecodeError, OSError):
+                tqdm.write(Fore.YELLOW + f"⚠️ Skipping binary/non-UTF8 file: {full_path}")
+                continue
+            file_matches = []
+            for pattern in scanner.patterns:
+                for match_obj in pattern["regex"].finditer(content):
+                    snippet = scanner.create_advanced_snippet(content, match_obj, context=40)
+                    file_matches.append({
+                        "pattern_name": pattern["name"],
+                        "match": match_obj.group(),
+                        "line_number": content[:match_obj.start()].count("\n") + 1,
+                        "snippet": snippet
+                    })
+            if file_matches:
+                results.append({
+                    "file_path": os.path.relpath(full_path, folder_path),
+                    "matches": file_matches
+                })
+    try:
+        mtime = os.path.getmtime(folder_path)
+        dt = datetime.fromtimestamp(mtime)
+        commit_date = dt.isoformat()
+        commit_year = dt.strftime("%Y")
+    except Exception:
+        commit_date = "unknown"
+        commit_year = "unknown"
+    repo_dict = {
+        "repo_full_name": folder_path,
+        "results": results,
+        "commit_results": [],
+        "has_secrets": "true" if results else "false",
+        "head_commit_date": commit_date,
+        "commit_year": commit_year,
+        "is_local": True
+    }
+    if results:
+        tqdm.write(Fore.GREEN + f"✅ Secrets found in local folder: {folder_path}")
+    else:
+        tqdm.write(Fore.CYAN + f"ℹ️ No secrets found in local folder: {folder_path}")
+    return repo_dict
+
 async def wait_for_enter():
     """
     Asynchronously waits for the user to press Enter.
-    Uses sys.stdin.readline on non-Windows.
     """
     if os.name == "nt":
         import msvcrt
@@ -791,10 +952,10 @@ async def wait_for_enter():
         line = await loop.run_in_executor(None, sys.stdin.readline)
         return True if line.strip() == "" else False
 
-async def process_repo(repo_full_name, scanner, session):
+async def process_repo(repo_full_name, scanner, session, include_forks=True):
     """
-    Scans a single repository concurrently (HEAD and optionally commits).
-    If Enter is pressed during this repo's scan, cancel and skip only that repo.
+    Scans a single GitHub repository.
+    Fork exclusion logic has been removed.
     """
     repo_dict = {"repo_full_name": repo_full_name, "results": [], "commit_results": []}
     try:
@@ -805,6 +966,12 @@ async def process_repo(repo_full_name, scanner, session):
             tqdm.write(Fore.GREEN + f"✅ Secrets found in {repo_full_name} (HEAD)")
         else:
             tqdm.write(Fore.CYAN + f"ℹ️ {repo_full_name} is empty or has no secrets (HEAD)")
+        commit_list = await scanner.fetch_commit_list(session, repo_full_name, per_page=1)
+        if commit_list:
+            head_commit_date = commit_list[0].get("commit", {}).get("author", {}).get("date", "unknown")
+            repo_dict["head_commit_date"] = head_commit_date
+        else:
+            repo_dict["head_commit_date"] = "unknown"
         if scanner.commit_scan_flag:
             if scanner.commit_limit is None:
                 commit_list = await scanner.fetch_all_commits(session, repo_full_name)
@@ -821,7 +988,8 @@ async def process_repo(repo_full_name, scanner, session):
                     commit_results.append({
                         "commit_id": commit_sha,
                         "commit_url": commit_url,
-                        "results": commit_scan_results
+                        "results": commit_scan_results.get("results") if commit_scan_results and isinstance(commit_scan_results, dict) else None,
+                        "commit_date": commit_scan_results.get("commit_date") if commit_scan_results and isinstance(commit_scan_results, dict) else "unknown"
                     })
                 repo_dict["commit_results"] = commit_results
         return repo_dict
@@ -835,95 +1003,111 @@ async def main():
         parser.add_argument("--log", action="store_true", help="Enable verbose logging")
         args = parser.parse_args()
 
-        github_token = os.getenv("GITHUB_TOKEN") or input("Enter your GitHub Token: ").strip()
-        patterns_file = 'git-leaks.yaml'
-        scanner = GitLeaksAsyncScanner(github_token, patterns_file)
-
+        # Ask for input method.
         tqdm.write(Fore.CYAN + "\nChoose Input Method:")
         tqdm.write("1. Enter a single GitHub Repo (e.g., username/repo)")
         tqdm.write("2. Enter a username (scan all their repos)")
         tqdm.write("3. Provide a file containing list of usernames")
-        choice = input("Enter choice (1, 2 or 3): ").strip()
+        tqdm.write("4. Scan a local folder (recursive)")
+        choice = input("Enter choice (1, 2, 3, or 4): ").strip()
+
+        # For GitHub options (1,2,3) ask for GitHub token.
+        github_required = choice in ["1", "2", "3"]
+        if github_required:
+            github_token = os.getenv("GITHUB_TOKEN") or input("Enter your GitHub Token: ").strip()
+        else:
+            github_token = "dummy-token"
+
+        patterns_file = 'git-leaks.yaml'
+        scanner = GitLeaksAsyncScanner(github_token, patterns_file)
 
         repos = []
+        local_results = []
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=100)) as session:
             if choice == "1":
                 repo_full_name = input("Enter GitHub Repo (e.g., username/repo): ").strip()
                 repos.append(repo_full_name)
             elif choice == "2":
                 username = input("Enter GitHub Username: ").strip()
-                repos = await scanner.fetch_repos_of_user(session, username)
+                repos = await scanner.fetch_repos_of_user(session, username, include_forks=True)
             elif choice == "3":
                 filepath = input("Enter path to file containing usernames: ").strip()
                 if os.path.exists(filepath):
                     with open(filepath, 'r', encoding='utf-8') as f:
                         usernames = [line.strip() for line in f if line.strip()]
-                    tasks = [scanner.fetch_repos_of_user(session, user) for user in usernames]
+                    tasks = [scanner.fetch_repos_of_user(session, user, include_forks=True) for user in usernames]
                     results_ = await asyncio.gather(*tasks)
                     for user_repos in results_:
                         repos.extend(user_repos)
                 else:
                     tqdm.write(Fore.RED + "❌ File not found.")
                     return
+            elif choice == "4":
+                folder_path = input("Enter local folder path: ").strip()
+                repo_dict = await process_local_folder(folder_path, scanner)
+                local_results.append(repo_dict)
             else:
                 tqdm.write(Fore.RED + "❌ Invalid choice.")
                 return
 
-            if not repos:
-                tqdm.write(Fore.RED + "❌ No repositories to scan.")
+            all_repo_results = []
+            if repos:
+                commit_scan_flag = False
+                commit_limit = 0
+                scan_commits_choice = input("Do you want to scan older git commits as well? (y/n): ").strip().lower()
+                if scan_commits_choice.startswith("y"):
+                    commit_scan_flag = True
+                    commits_input = input("Enter number of commits to scan (or type 'all'): ").strip().lower()
+                    if commits_input == "all":
+                        commit_limit = None
+                    else:
+                        try:
+                            commit_limit = int(commits_input)
+                        except ValueError:
+                            tqdm.write(Fore.RED + "❌ Invalid commit count. Exiting.")
+                            return
+                scanner.commit_scan_flag = commit_scan_flag
+                scanner.commit_limit = commit_limit
+
+                tqdm.write(Fore.CYAN + f"🔎 Total repos to scan: {len(repos)}")
+                tqdm.write(Fore.CYAN + "Press Enter at any time to skip the *current* repo scanning.\n")
+                repo_tasks = []
+                for repo in repos:
+                    task = asyncio.create_task(process_repo(repo, scanner, session, include_forks=True))
+                    task.set_name(repo)
+                    repo_tasks.append(task)
+                skip_task = asyncio.create_task(wait_for_enter())
+                results = []
+                remaining_tasks = set(repo_tasks)
+                with tqdm(total=len(repo_tasks), bar_format="Progress: {n_fmt}/{total_fmt} | Elapsed: {elapsed}") as pbar:
+                    while remaining_tasks:
+                        done, pending = await asyncio.wait(remaining_tasks, timeout=0.1, return_when=asyncio.FIRST_COMPLETED)
+                        for d in done:
+                            try:
+                                results.append(d.result())
+                            except asyncio.CancelledError:
+                                pass
+                        pbar.update(len(done))
+                        remaining_tasks = pending
+                        if skip_task.done() and pending:
+                            task_to_cancel = next(iter(pending))
+                            task_to_cancel.cancel()
+                            try:
+                                await task_to_cancel
+                            except asyncio.CancelledError:
+                                tqdm.write(Fore.WHITE + f"⏭️ Skipping repo: {task_to_cancel.get_name()}")
+                            pbar.update(1)
+                            remaining_tasks = remaining_tasks - {task_to_cancel}
+                            skip_task = asyncio.create_task(wait_for_enter())
+                all_repo_results.extend(results)
+            all_repo_results.extend(local_results)
+            if not all_repo_results:
+                tqdm.write(Fore.RED + "❌ No repositories or folders to scan.")
                 return
 
-            commit_scan_flag = False
-            commit_limit = 0
-            scan_commits_choice = input("Do you want to scan older git commits as well? (y/n): ").strip().lower()
-            if scan_commits_choice.startswith("y"):
-                commit_scan_flag = True
-                commits_input = input("Enter number of commits to scan (or type 'all'): ").strip().lower()
-                if commits_input == "all":
-                    commit_limit = None
-                else:
-                    try:
-                        commit_limit = int(commits_input)
-                    except ValueError:
-                        tqdm.write(Fore.RED + "❌ Invalid commit count. Exiting.")
-                        return
-            scanner.commit_scan_flag = commit_scan_flag
-            scanner.commit_limit = commit_limit
-
-            tqdm.write(Fore.CYAN + f"🔎 Total repos to scan: {len(repos)}")
-            tqdm.write(Fore.CYAN + "Press Enter at any time to skip the *current* repo scanning.\n")
-
-            repo_tasks = []
-            for repo in repos:
-                task = asyncio.create_task(process_repo(repo, scanner, session))
-                task.set_name(repo)
-                repo_tasks.append(task)
-            skip_task = asyncio.create_task(wait_for_enter())
-            results = []
-            remaining_tasks = set(repo_tasks)
-            with tqdm(total=len(repo_tasks), bar_format="Progress: {n_fmt}/{total_fmt} | Elapsed: {elapsed}") as pbar:
-                while remaining_tasks:
-                    done, pending = await asyncio.wait(remaining_tasks, timeout=0.1, return_when=asyncio.FIRST_COMPLETED)
-                    for d in done:
-                        try:
-                            results.append(d.result())
-                        except asyncio.CancelledError:
-                            pass
-                    pbar.update(len(done))
-                    remaining_tasks = pending
-                    if skip_task.done() and pending:
-                        task_to_cancel = next(iter(pending))
-                        task_to_cancel.cancel()
-                        try:
-                            await task_to_cancel
-                        except asyncio.CancelledError:
-                            tqdm.write(Fore.WHITE + f"⏭️ Skipping repo: {task_to_cancel.get_name()}")
-                        pbar.update(1)
-                        remaining_tasks = remaining_tasks - {task_to_cancel}
-                        skip_task = asyncio.create_task(wait_for_enter())
-
-            output_file = 'unified_report.html'
-            scanner.generate_unified_html_report(results, output_file=output_file)
+            # Generate a report file with a timestamp in its name.
+            output_file = f"unified_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            scanner.generate_unified_html_report(all_repo_results, output_file=output_file)
             tqdm.write(Fore.GREEN + "✅ Scan completed.")
     except KeyboardInterrupt:
         tqdm.write(Fore.YELLOW + "\n⏹️ Received KeyboardInterrupt. Cancelling pending tasks...")
