@@ -33,6 +33,46 @@ def format_commit_date(date_str):
     except Exception:
         return date_str
 
+async def heartbeat():
+    """
+    Background task that every 30 seconds prints the names of currently active tasks.
+    """
+    while True:
+        await asyncio.sleep(30)
+        active_tasks = [t.get_name() for t in asyncio.all_tasks() if not t.done() and t.get_name() != "Heartbeat"]
+        tqdm.write(Fore.MAGENTA + "Heartbeat: Active tasks: " + ", ".join(active_tasks))
+
+async def wait_for_enter_or_status():
+    """
+    Non‑blocking wait function that:
+      - On Windows: Checks for keypress every 0.1 sec. If the key pressed is 's' (case‑insensitive), prints
+        the status (i.e. names of active tasks). If Enter is pressed, returns.
+      - On UNIX: Reads from sys.stdin in a background executor. If the input is "s", prints the status and
+        continues waiting; any other input (or just Enter) is considered as a signal to proceed.
+    """
+    if os.name == "nt":
+        import msvcrt
+        while True:
+            await asyncio.sleep(0.1)
+            if msvcrt.kbhit():
+                ch = msvcrt.getch()
+                if ch.lower() == b's':
+                    active_tasks = [t.get_name() for t in asyncio.all_tasks() if not t.done() and t.get_name() != "Heartbeat"]
+                    tqdm.write(Fore.MAGENTA + "Manual Status: Active tasks: " + ", ".join(active_tasks))
+                elif ch in (b'\r', b'\n'):
+                    while msvcrt.kbhit():
+                        msvcrt.getch()
+                    return True
+    else:
+        loop = asyncio.get_running_loop()
+        line = await loop.run_in_executor(None, sys.stdin.readline)
+        if line.strip().lower() == "s":
+            active_tasks = [t.get_name() for t in asyncio.all_tasks() if not t.done() and t.get_name() != "Heartbeat"]
+            tqdm.write(Fore.MAGENTA + "Manual Status: Active tasks: " + ", ".join(active_tasks))
+            return await wait_for_enter_or_status()
+        else:
+            return True
+
 class GitLeaksAsyncScanner:
     def __init__(self, github_token, patterns_file='git-leaks.yaml', concurrency=10,
                  commit_scan_flag=False, commit_limit=0):
@@ -71,45 +111,59 @@ class GitLeaksAsyncScanner:
     async def _fetch_json(self, session, url, headers=None):
         headers = headers if headers is not None else self.headers
         while True:
-            async with self.semaphore:
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status == 409:
-                        tqdm.write(Fore.WHITE + f"∅ Conflict (409) for URL: {url}")
-                        return {}
-                    if resp.status == 403 and (
-                        "X-RateLimit-Remaining" not in resp.headers or
-                        int(resp.headers.get("X-RateLimit-Remaining", "0")) == 0):
-                        tqdm.write(Fore.YELLOW + f"Rate limit reached for JSON at {url}, waiting 60 sec...")
-                        await asyncio.sleep(60)
-                        continue
-                    if resp.status == 200:
-                        return await resp.json()
-                    else:
-                        tqdm.write(Fore.RED + f"❌ Error fetching JSON from {url}: {resp.status}")
-                        return {}
+            try:
+                async with self.semaphore:
+                    async with session.get(url, headers=headers) as resp:
+                        if resp.status == 409:
+                            tqdm.write(Fore.WHITE + f"∅ Conflict (409) for URL: {url}")
+                            return {}
+                        if resp.status == 403 and (
+                            "X-RateLimit-Remaining" not in resp.headers or
+                            int(resp.headers.get("X-RateLimit-Remaining", "0")) == 0):
+                            tqdm.write(Fore.YELLOW + f"Rate limit reached for JSON at {url}, waiting 60 sec...")
+                            await asyncio.sleep(60)
+                            continue
+                        if resp.status == 200:
+                            return await resp.json()
+                        else:
+                            tqdm.write(Fore.RED + f"❌ Error fetching JSON from {url}: {resp.status}")
+                            return {}
+            except asyncio.CancelledError:
+                raise
+            except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+                tqdm.write(Fore.YELLOW + f"⚠️ Error fetching JSON from {url}: {e}. Retrying in 60 sec...")
+                await asyncio.sleep(60)
+                continue
 
     async def _fetch_text(self, session, url, headers=None):
         headers = headers if headers is not None else {}
         while True:
-            async with self.semaphore:
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status == 409:
-                        tqdm.write(Fore.WHITE + f"∅ Conflict (409) for URL: {url}")
-                        return None
-                    if resp.status == 403 and (
-                        "X-RateLimit-Remaining" not in resp.headers or
-                        int(resp.headers.get("X-RateLimit-Remaining", "0")) == 0):
-                        tqdm.write(Fore.YELLOW + f"Rate limit reached for text at {url}, waiting 60 sec...")
-                        await asyncio.sleep(60)
-                        continue
-                    if resp.status == 200:
-                        try:
-                            return await resp.text()
-                        except UnicodeDecodeError:
-                            tqdm.write(Fore.YELLOW + f"⚠️ Skipping binary or non‑UTF8 file: {url}")
+            try:
+                async with self.semaphore:
+                    async with session.get(url, headers=headers) as resp:
+                        if resp.status == 409:
+                            tqdm.write(Fore.WHITE + f"∅ Conflict (409) for URL: {url}")
                             return None
-                    else:
-                        return None
+                        if resp.status == 403 and (
+                            "X-RateLimit-Remaining" not in resp.headers or
+                            int(resp.headers.get("X-RateLimit-Remaining", "0")) == 0):
+                            tqdm.write(Fore.YELLOW + f"Rate limit reached for text at {url}, waiting 60 sec...")
+                            await asyncio.sleep(60)
+                            continue
+                        if resp.status == 200:
+                            try:
+                                return await resp.text()
+                            except UnicodeDecodeError:
+                                tqdm.write(Fore.YELLOW + f"⚠️ Skipping binary or non‑UTF8 file: {url}")
+                                return None
+                        else:
+                            return None
+            except asyncio.CancelledError:
+                raise
+            except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+                tqdm.write(Fore.YELLOW + f"⚠️ Error fetching text from {url}: {e}. Retrying in 60 sec...")
+                await asyncio.sleep(60)
+                continue
 
     async def check_rate_limit(self, session):
         url = "https://api.github.com/rate_limit"
@@ -126,8 +180,11 @@ class GitLeaksAsyncScanner:
         url = f"https://api.github.com/users/{username}/repos?per_page=100&type=all"
         data = await self._fetch_json(session, url, headers=self.headers)
         if data:
-            # All repos are returned (fork exclusion removed)
-            return [repo["full_name"] for repo in data]
+            if not include_forks:
+                repos = [repo["full_name"] for repo in data if not repo.get("fork", False)]
+                return repos
+            else:
+                return [repo["full_name"] for repo in data]
         else:
             tqdm.write(Fore.RED + f"❌ Failed to fetch repos for user {username}")
             return []
@@ -169,7 +226,6 @@ class GitLeaksAsyncScanner:
         clean_results = [r for r in results if r and not isinstance(r, Exception)]
         return clean_results
 
-    # ---- Commit Scanning Methods ----
     async def fetch_commit_list(self, session, repo_full_name, per_page=5):
         url = f"https://api.github.com/repos/{repo_full_name}/commits?per_page={per_page}"
         data = await self._fetch_json(session, url, headers=self.headers)
@@ -263,13 +319,7 @@ class GitLeaksAsyncScanner:
 
     def generate_unified_html_report(self, all_results, output_file=None):
         """
-        Generates an HTML report with:
-          - A master "Hide All Patterns" filter that—when checked—hides all rows unless specific pattern filters are applied.
-          - Multi-select year filter via checkboxes.
-          - A Repository Filter (based on the repo’s has_secrets flag) to hide repositories with no secrets.
-          - For local folders, file links are plain text and commit date comes from the folder mtime.
-          - Commit dropdown options are highlighted with a red warning if secrets are present in old commits.
-          - A dedicated “Secrets in Old Commits” section shows a red warning message if any commit secrets are detected.
+        Generates an HTML report with various filters and formatting.
         """
         if not output_file:
             output_file = f"unified_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
@@ -571,12 +621,10 @@ class GitLeaksAsyncScanner:
                 userBlocks[i].style.display = hasMatch ? "block" : "none";
               }
             }
-            // Define a helper function to update all filters.
             function updateFilters() {
               updateResultsFilters();
               updateRepositorySections();
             }
-            // Pattern filtering:
             function updatePatternCheckboxes(event) {
               if (event.target.id === "hideAllPatterns") {
                 if (event.target.checked) {
@@ -586,8 +634,6 @@ class GitLeaksAsyncScanner:
                   });
                 }
               } else {
-                // If any specific pattern checkbox is selected while "Hide All Patterns" is checked,
-                // uncheck the "Hide All Patterns" checkbox.
                 if (event.target.checked && document.getElementById("hideAllPatterns").checked) {
                   document.getElementById("hideAllPatterns").checked = false;
                 }
@@ -610,14 +656,12 @@ class GitLeaksAsyncScanner:
                 var pattern = rows[j].getAttribute("data-pattern").toLowerCase();
                 var matchesSearch = (rowText.indexOf(mainSearch) !== -1);
                 if (activePatterns.length > 0) {
-                  // When one or more patterns are selected, show only rows that match those patterns and the search.
                   if (activePatterns.indexOf(pattern) > -1 && matchesSearch) {
                     rows[j].style.display = "";
                   } else {
                     rows[j].style.display = "none";
                   }
                 } else {
-                  // If no specific pattern is selected, then rely on the master toggle.
                   if (hideAll) {
                     rows[j].style.display = "none";
                   } else {
@@ -627,7 +671,6 @@ class GitLeaksAsyncScanner:
               }
             }
             function updateRepositorySections() {
-              // Get active years from the year checkboxes.
               var yearCheckboxes = document.querySelectorAll(".year-checkbox");
               var activeYears = [];
               for (var i = 0; i < yearCheckboxes.length; i++) {
@@ -635,15 +678,12 @@ class GitLeaksAsyncScanner:
                   activeYears.push(yearCheckboxes[i].value);
                 }
               }
-              // Get the state of the "hide repositories with no secrets" checkbox.
               var hideNoSecrets = document.getElementById("hideNoSecrets").checked;
               var repoSections = document.getElementsByClassName("repository-section");
               for (var i = 0; i < repoSections.length; i++) {
                 var repo = repoSections[i];
                 var repoYear = repo.getAttribute("data-year");
-                // Determine if the repository's commit year is among the active years.
                 var yearMatch = activeYears.indexOf(repoYear) > -1;
-                // Check for at least one visible secret row in the repository section.
                 var secretRows = repo.querySelectorAll(".dataRow");
                 var visibleSecretExists = false;
                 for (var j = 0; j < secretRows.length; j++) {
@@ -729,7 +769,6 @@ class GitLeaksAsyncScanner:
                 </ul>
               </div>
             {% endfor %}
-            <!-- Unified Patterns Filter -->
             <fieldset class="filter-fieldset">
               <legend>Patterns</legend>
               <label><input type="checkbox" id="hideAllPatterns" checked> Hide All Patterns</label>
@@ -737,14 +776,12 @@ class GitLeaksAsyncScanner:
                 <label><input type="checkbox" class="pattern-checkbox" value="{{ pattern }}"> {{ pattern }}</label>
               {% endfor %}
             </fieldset>
-            <!-- Multi-select Year Filter -->
             <fieldset class="filter-fieldset">
               <legend>Filter by Year</legend>
               {% for year in unique_years %}
                 <label><input type="checkbox" class="year-checkbox" value="{{ year }}" checked> {{ year }}</label>
               {% endfor %}
             </fieldset>
-            <!-- Repository Filter -->
             <fieldset class="filter-fieldset">
               <legend>Repository Filter</legend>
               <label><input type="checkbox" id="hideNoSecrets" checked onchange="updateFilters()"> Hide repositories with no secrets</label>
@@ -773,7 +810,6 @@ class GitLeaksAsyncScanner:
                     </select>
                   </div>
                   <p id="commitDateDisplay_{{ safe_repo }}">Commit Date: <span id="commitDate_{{ safe_repo }}">{{ repo.head_commit_date|default('unknown') }}</span></p>
-                  <!-- Secrets in Old Commits Section -->
                   {% if repo.commit_results and (repo.commit_results|selectattr("results")|list|length > 0) %}
                   <div class="old-commit-secrets">
                     <h3 class="warning-text">Secrets in old commits detected.</h3>
@@ -881,8 +917,7 @@ class GitLeaksAsyncScanner:
 
 async def process_local_folder(folder_path, scanner):
     """
-    Recursively scans the local folder.
-    For each file, reads its content and applies regex matching.
+    Recursively scans the local folder and applies regex matching.
     The folder's last modified time is used as the commit date.
     """
     results = []
@@ -933,29 +968,9 @@ async def process_local_folder(folder_path, scanner):
         tqdm.write(Fore.CYAN + f"ℹ️ No secrets found in local folder: {folder_path}")
     return repo_dict
 
-async def wait_for_enter():
-    """
-    Asynchronously waits for the user to press Enter.
-    """
-    if os.name == "nt":
-        import msvcrt
-        while True:
-            await asyncio.sleep(0.1)
-            if msvcrt.kbhit():
-                ch = msvcrt.getch()
-                if ch in (b'\r', b'\n'):
-                    while msvcrt.kbhit():
-                        msvcrt.getch()
-                    return True
-    else:
-        loop = asyncio.get_running_loop()
-        line = await loop.run_in_executor(None, sys.stdin.readline)
-        return True if line.strip() == "" else False
-
 async def process_repo(repo_full_name, scanner, session, include_forks=True):
     """
     Scans a single GitHub repository.
-    Fork exclusion logic has been removed.
     """
     repo_dict = {"repo_full_name": repo_full_name, "results": [], "commit_results": []}
     try:
@@ -1003,23 +1018,29 @@ async def main():
         parser.add_argument("--log", action="store_true", help="Enable verbose logging")
         args = parser.parse_args()
 
-        # Ask for input method.
         tqdm.write(Fore.CYAN + "\nChoose Input Method:")
         tqdm.write("1. Enter a single GitHub Repo (e.g., username/repo)")
         tqdm.write("2. Enter a username (scan all their repos)")
-        tqdm.write("3. Provide a file containing list of usernames")
+        tqdm.write("3. Provide a file (or directory) containing list of usernames")
         tqdm.write("4. Scan a local folder (recursive)")
         choice = input("Enter choice (1, 2, 3, or 4): ").strip()
 
-        # For GitHub options (1,2,3) ask for GitHub token.
         github_required = choice in ["1", "2", "3"]
         if github_required:
             github_token = os.getenv("GITHUB_TOKEN") or input("Enter your GitHub Token: ").strip()
         else:
             github_token = "dummy-token"
 
+        include_forks = True
+        if choice in ["2", "3"]:
+            fork_input = input("Include forked repositories? (y/n): ").strip().lower()
+            if fork_input.startswith("n"):
+                include_forks = False
+
         patterns_file = 'git-leaks.yaml'
         scanner = GitLeaksAsyncScanner(github_token, patterns_file)
+
+        heartbeat_task = asyncio.create_task(heartbeat(), name="Heartbeat")
 
         repos = []
         local_results = []
@@ -1029,19 +1050,90 @@ async def main():
                 repos.append(repo_full_name)
             elif choice == "2":
                 username = input("Enter GitHub Username: ").strip()
-                repos = await scanner.fetch_repos_of_user(session, username, include_forks=True)
+                repos = await scanner.fetch_repos_of_user(session, username, include_forks=include_forks)
             elif choice == "3":
-                filepath = input("Enter path to file containing usernames: ").strip()
-                if os.path.exists(filepath):
-                    with open(filepath, 'r', encoding='utf-8') as f:
+                path_input = input("Enter path to file/directory containing usernames: ").strip()
+                if not os.path.exists(path_input):
+                    tqdm.write(Fore.RED + "❌ File/Directory not found.")
+                    return
+
+                global_scan_commits_choice = input("Do you want to scan older git commits for all username files? (y/n): ").strip().lower()
+                if global_scan_commits_choice.startswith("y"):
+                    global_commit_scan_flag = True
+                    global_commits_input = input("Enter number of commits to scan (or type 'all'): ").strip().lower()
+                    if global_commits_input == "all":
+                        global_commit_limit = None
+                    else:
+                        try:
+                            global_commit_limit = int(global_commits_input)
+                        except ValueError:
+                            tqdm.write(Fore.RED + "❌ Invalid commit count. Skipping commit scanning.")
+                            global_commit_scan_flag = False
+                            global_commit_limit = 0
+                else:
+                    global_commit_scan_flag = False
+                    global_commit_limit = 0
+
+                if os.path.isdir(path_input):
+                    for txt_file in sorted(os.listdir(path_input)):
+                        if txt_file.endswith('.txt'):
+                            file_path = os.path.join(path_input, txt_file)
+                            tqdm.write(Fore.CYAN + f"🔍 Processing usernames file: {file_path}")
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                usernames = [line.strip() for line in f if line.strip()]
+                            repos = []
+                            tasks = [scanner.fetch_repos_of_user(session, user, include_forks=include_forks) for user in usernames]
+                            results_ = await asyncio.gather(*tasks)
+                            for user_repos in results_:
+                                repos.extend(user_repos)
+                            if not repos:
+                                tqdm.write(Fore.RED + f"❌ No repositories found for file: {file_path}")
+                                continue
+                            scanner.commit_scan_flag = global_commit_scan_flag
+                            scanner.commit_limit = global_commit_limit
+
+                            tqdm.write(Fore.CYAN + f"🔎 Total repos to scan for file {txt_file}: {len(repos)}")
+                            repo_tasks = []
+                            for repo in repos:
+                                task = asyncio.create_task(process_repo(repo, scanner, session, include_forks=include_forks))
+                                task.set_name(repo)
+                                repo_tasks.append(task)
+                            skip_task = asyncio.create_task(wait_for_enter_or_status())
+                            results = []
+                            remaining_tasks = set(repo_tasks)
+                            with tqdm(total=len(repo_tasks), bar_format="Progress: {n_fmt}/{total_fmt} | Elapsed: {elapsed}") as pbar:
+                                while remaining_tasks:
+                                    done, pending = await asyncio.wait(remaining_tasks, timeout=0.1, return_when=asyncio.FIRST_COMPLETED)
+                                    for d in done:
+                                        try:
+                                            results.append(d.result())
+                                        except asyncio.CancelledError:
+                                            pass
+                                    pbar.update(len(done))
+                                    remaining_tasks = pending
+                                    if skip_task.done() and pending:
+                                        task_to_cancel = next(iter(pending))
+                                        task_to_cancel.cancel()
+                                        try:
+                                            await task_to_cancel
+                                        except asyncio.CancelledError:
+                                            tqdm.write(Fore.WHITE + f"⏭️ Skipping repo: {task_to_cancel.get_name()}")
+                                        pbar.update(1)
+                                        remaining_tasks = remaining_tasks - {task_to_cancel}
+                                        skip_task = asyncio.create_task(wait_for_enter_or_status())
+                            unified_report_file = f"unified_report_{os.path.splitext(txt_file)[0]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                            scanner.generate_unified_html_report(results, output_file=unified_report_file)
+                            tqdm.write(Fore.GREEN + f"✅ Scan completed for {txt_file}, report generated: {unified_report_file}")
+                    return
+                else:
+                    with open(path_input, 'r', encoding='utf-8') as f:
                         usernames = [line.strip() for line in f if line.strip()]
-                    tasks = [scanner.fetch_repos_of_user(session, user, include_forks=True) for user in usernames]
+                    tasks = [scanner.fetch_repos_of_user(session, user, include_forks=include_forks) for user in usernames]
                     results_ = await asyncio.gather(*tasks)
                     for user_repos in results_:
                         repos.extend(user_repos)
-                else:
-                    tqdm.write(Fore.RED + "❌ File not found.")
-                    return
+                    scanner.commit_scan_flag = global_commit_scan_flag
+                    scanner.commit_limit = global_commit_limit
             elif choice == "4":
                 folder_path = input("Enter local folder path: ").strip()
                 repo_dict = await process_local_folder(folder_path, scanner)
@@ -1070,13 +1162,12 @@ async def main():
                 scanner.commit_limit = commit_limit
 
                 tqdm.write(Fore.CYAN + f"🔎 Total repos to scan: {len(repos)}")
-                tqdm.write(Fore.CYAN + "Press Enter at any time to skip the *current* repo scanning.\n")
                 repo_tasks = []
                 for repo in repos:
-                    task = asyncio.create_task(process_repo(repo, scanner, session, include_forks=True))
+                    task = asyncio.create_task(process_repo(repo, scanner, session, include_forks=include_forks))
                     task.set_name(repo)
                     repo_tasks.append(task)
-                skip_task = asyncio.create_task(wait_for_enter())
+                skip_task = asyncio.create_task(wait_for_enter_or_status())
                 results = []
                 remaining_tasks = set(repo_tasks)
                 with tqdm(total=len(repo_tasks), bar_format="Progress: {n_fmt}/{total_fmt} | Elapsed: {elapsed}") as pbar:
@@ -1098,17 +1189,17 @@ async def main():
                                 tqdm.write(Fore.WHITE + f"⏭️ Skipping repo: {task_to_cancel.get_name()}")
                             pbar.update(1)
                             remaining_tasks = remaining_tasks - {task_to_cancel}
-                            skip_task = asyncio.create_task(wait_for_enter())
+                            skip_task = asyncio.create_task(wait_for_enter_or_status())
                 all_repo_results.extend(results)
             all_repo_results.extend(local_results)
             if not all_repo_results:
                 tqdm.write(Fore.RED + "❌ No repositories or folders to scan.")
                 return
 
-            # Generate a report file with a timestamp in its name.
             output_file = f"unified_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             scanner.generate_unified_html_report(all_repo_results, output_file=output_file)
             tqdm.write(Fore.GREEN + "✅ Scan completed.")
+        heartbeat_task.cancel()
     except KeyboardInterrupt:
         tqdm.write(Fore.YELLOW + "\n⏹️ Received KeyboardInterrupt. Cancelling pending tasks...")
         for task in asyncio.all_tasks():
